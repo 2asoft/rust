@@ -665,6 +665,7 @@ impl<'tcx> LintContext for LateContext<'tcx> {
         decorate: impl for<'a, 'b> FnOnce(&'b mut Diag<'a, ()>),
     ) {
         let hir_id = self.last_node_with_lint_attrs;
+        println!("dbg: LateContext::opt_span_lint[lint={:#?}, hir_id={:#?}]", lint, hir_id);
 
         match span {
             Some(s) => self.tcx.node_span_lint(lint, hir_id, s, decorate),
