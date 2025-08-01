@@ -701,6 +701,7 @@ impl<D: Deps> DepGraphData<D> {
 
             match &side_effect {
                 QuerySideEffect::Diagnostic(diagnostic) => {
+                    eprintln!("DEBUG: Replaying cached diagnostic: {:?}", diagnostic.code);
                     qcx.dep_context().sess().dcx().emit_diagnostic(diagnostic.clone());
                 }
             }
