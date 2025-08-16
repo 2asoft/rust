@@ -45,6 +45,28 @@ use crate::source_map::SourceMap;
 use crate::symbol::{Symbol, kw, sym};
 use crate::{DUMMY_SP, HashStableContext, Span, SpanDecoder, SpanEncoder, with_session_globals};
 
+/// A lightweight representation of a diagnostic attribute (allow, warn, deny, forbid, expect)
+/// preserved through macro expansion for lint level resolution.
+#[derive(Clone, Debug, Encodable, Decodable, HashStable_Generic)]
+pub struct PreservedDiagnosticAttr {
+    /// The diagnostic level: allow, warn, deny, forbid, or expect
+    pub level: DiagnosticLevel,
+    /// The lint names specified in the attribute (e.g., ["clippy::disallowed_macros"])
+    pub lint_names: Arc<[Symbol]>,
+    /// The span of the original attribute for error reporting
+    pub span: Span,
+}
+
+/// The level specified by a diagnostic attribute
+#[derive(Clone, Copy, Debug, Encodable, Decodable, HashStable_Generic)]
+pub enum DiagnosticLevel {
+    Allow,
+    Warn,
+    Deny,
+    Forbid,
+    Expect,
+}
+
 /// A `SyntaxContext` represents a chain of pairs `(ExpnId, Transparency)` named "marks".
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SyntaxContext(u32);
@@ -1035,6 +1057,9 @@ pub struct ExpnData {
     pub(crate) collapse_debuginfo: bool,
     /// When true, we do not display the note telling people to use the `-Zmacro-backtrace` flag.
     pub hide_backtrace: bool,
+    /// Diagnostic attributes (allow, warn, deny, forbid, expect) from pre-expansion code
+    /// that should be preserved for lint level resolution
+    pub preserved_diagnostic_attrs: Option<Arc<[PreservedDiagnosticAttr]>>,
 }
 
 impl !PartialEq for ExpnData {}
@@ -1054,6 +1079,7 @@ impl ExpnData {
         local_inner_macros: bool,
         collapse_debuginfo: bool,
         hide_backtrace: bool,
+        preserved_diagnostic_attrs: Option<Arc<[PreservedDiagnosticAttr]>>,
     ) -> ExpnData {
         ExpnData {
             kind,
@@ -1069,6 +1095,7 @@ impl ExpnData {
             local_inner_macros,
             collapse_debuginfo,
             hide_backtrace,
+            preserved_diagnostic_attrs,
         }
     }
 
@@ -1094,6 +1121,7 @@ impl ExpnData {
             local_inner_macros: false,
             collapse_debuginfo: false,
             hide_backtrace: false,
+            preserved_diagnostic_attrs: None,
         }
     }
 

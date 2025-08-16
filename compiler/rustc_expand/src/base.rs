@@ -1076,6 +1076,7 @@ impl SyntaxExtension {
             self.local_inner_macros,
             self.collapse_debuginfo,
             self.builtin_name.is_some(),
+            None, // preserved_diagnostic_attrs - will be filled in step 2
         )
     }
 }
