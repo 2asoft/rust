@@ -1251,13 +1251,15 @@ pub struct ExtCtxt<'a> {
     pub force_mode: bool,
     pub expansions: FxIndexMap<Span, Vec<String>>,
     /// Used for running pre-expansion lints on freshly loaded modules.
-    pub(super) lint_store: LintStoreExpandDyn<'a>,
-    /// Used for storing lints generated during expansion, like `NAMED_ARGUMENTS_USED_POSITIONALLY`
+    pub(super) lint_store: Option<&'a (dyn LintStoreExpand + 'a)>,
+    /// Used for storing lints generated during expansion, like `INCOMPLETE_INCLUDE`.
     pub buffered_early_lint: Vec<BufferedEarlyLint>,
     /// When we 'expand' an inert attribute, we leave it
     /// in the AST, but insert it here so that we know
     /// not to expand it again.
     pub(super) expanded_inert_attrs: MarkedAttrs,
+    /// The ExpnId of the current invocation being expanded, used as parent for proc macro output
+    pub(super) invocation_parent_expn_id: Option<LocalExpnId>,
     /// `-Zmacro-stats` data.
     pub macro_stats: FxHashMap<(Symbol, MacroKind), MacroStat>,
     pub nb_macro_errors: usize,
@@ -1275,22 +1277,23 @@ impl<'a> ExtCtxt<'a> {
             ecfg,
             num_standard_library_imports: 0,
             reduced_recursion_limit: None,
-            resolver,
-            lint_store,
             root_path: PathBuf::new(),
+            resolver,
             current_expansion: ExpansionData {
                 id: LocalExpnId::ROOT,
                 depth: 0,
                 module: Default::default(),
                 dir_ownership: DirOwnership::Owned { relative: None },
-                lint_node_id: ast::CRATE_NODE_ID,
+                lint_node_id: ast::DUMMY_NODE_ID,
                 is_trailing_mac: false,
             },
             force_mode: false,
             expansions: FxIndexMap::default(),
-            expanded_inert_attrs: MarkedAttrs::new(),
+            lint_store,
             buffered_early_lint: vec![],
-            macro_stats: Default::default(),
+            expanded_inert_attrs: MarkedAttrs::new(),
+            invocation_parent_expn_id: None,
+            macro_stats: FxHashMap::default(),
             nb_macro_errors: 0,
         }
     }

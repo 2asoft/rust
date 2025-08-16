@@ -25,7 +25,7 @@ use rustc_session::lint::BuiltinLintDiag;
 use rustc_session::lint::builtin::{UNUSED_ATTRIBUTES, UNUSED_DOC_COMMENTS};
 use rustc_session::parse::feature_err;
 use rustc_session::{Limit, Session};
-use rustc_span::hygiene::SyntaxContext;
+use rustc_span::hygiene::{DiagnosticLevel, PreservedDiagnosticAttr, SyntaxContext};
 use rustc_span::{ErrorGuaranteed, FileName, Ident, LocalExpnId, Span, Symbol, sym};
 use smallvec::SmallVec;
 
@@ -414,6 +414,68 @@ pub enum InvocationKind {
     },
 }
 
+/// Extract diagnostic attributes from an annotatable item
+fn extract_diagnostic_attrs(item: &Annotatable) -> Vec<PreservedDiagnosticAttr> {
+    let attrs = match item {
+        Annotatable::Item(i) => &i.attrs,
+        Annotatable::AssocItem(i, _) => &i.attrs,
+        Annotatable::ForeignItem(i) => &i.attrs,
+        Annotatable::Stmt(s) => match &s.kind {
+            StmtKind::Let(local) => &local.attrs,
+            StmtKind::Item(item) => &item.attrs,
+            StmtKind::Expr(expr) | StmtKind::Semi(expr) => &expr.attrs,
+            _ => return vec![],
+        },
+        Annotatable::Expr(e) => &e.attrs,
+        Annotatable::Arm(a) => &a.attrs,
+        Annotatable::ExprField(f) => &f.attrs,
+        Annotatable::PatField(f) => &f.attrs,
+        Annotatable::GenericParam(p) => &p.attrs,
+        Annotatable::Param(p) => &p.attrs,
+        Annotatable::FieldDef(f) => &f.attrs,
+        Annotatable::Variant(v) => &v.attrs,
+        Annotatable::WherePredicate(w) => &w.attrs,
+        Annotatable::Crate(c) => &c.attrs,
+    };
+
+    attrs.iter().filter_map(|attr| parse_diagnostic_attr(attr)).collect()
+}
+
+/// Parse a single attribute into a PreservedDiagnosticAttr if it's a diagnostic attribute
+fn parse_diagnostic_attr(attr: &ast::Attribute) -> Option<PreservedDiagnosticAttr> {
+    let ident = attr.ident()?;
+
+    let level = match ident.name {
+        sym::allow => DiagnosticLevel::Allow,
+        sym::warn => DiagnosticLevel::Warn,
+        sym::deny => DiagnosticLevel::Deny,
+        sym::forbid => DiagnosticLevel::Forbid,
+        sym::expect => DiagnosticLevel::Expect,
+        _ => return None,
+    };
+
+    // Extract lint names from the attribute
+    let meta_items = attr.meta_item_list()?;
+    let mut lint_names = Vec::new();
+
+    for item in meta_items {
+        if let MetaItemInner::MetaItem(meta) = item {
+            if meta.is_word() {
+                // Convert path to symbol - handle both "lint_name" and "tool::lint_name"
+                let path_str = pprust::path_to_string(&meta.path);
+                lint_names.push(Symbol::intern(&path_str));
+            }
+            // Skip reason = "..." and other non-lint items
+        }
+    }
+
+    if lint_names.is_empty() {
+        return None;
+    }
+
+    Some(PreservedDiagnosticAttr { level, lint_names: Arc::from(lint_names), span: attr.span() })
+}
+
 impl InvocationKind {
     fn placeholder_visibility(&self) -> Option<ast::Visibility> {
         // HACK: For unnamed fields placeholders should have the same visibility as the actual
@@ -780,9 +842,20 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
                 }
             }
             InvocationKind::Attr { attr, pos, mut item, derives } => {
+                // Extract and store diagnostic attributes at the invocation ExpnId
+                let invocation_expn_id = invoc.expansion_data.id;
+                let diagnostic_attrs = extract_diagnostic_attrs(&item);
+                if !diagnostic_attrs.is_empty() {
+                    invocation_expn_id.set_preserved_diagnostic_attrs(Arc::from(diagnostic_attrs));
+                }
+
                 if let Some(expander) = ext.as_attr() {
                     self.gate_proc_macro_input(&item);
                     self.gate_proc_macro_attr_item(span, &item);
+
+                    // Set the invocation parent for proc macro expansion
+                    self.cx.invocation_parent_expn_id = Some(invocation_expn_id);
+
                     let tokens = match &item {
                         // FIXME: Collect tokens and use them instead of generating
                         // fake ones. These are unstable, so it needs to be
@@ -889,9 +962,21 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             InvocationKind::Derive { path, item, is_const } => match ext {
                 SyntaxExtensionKind::Derive(expander)
                 | SyntaxExtensionKind::LegacyDerive(expander) => {
+                    // Extract and store diagnostic attributes at the invocation ExpnId
+                    let invocation_expn_id = invoc.expansion_data.id;
+                    let diagnostic_attrs = extract_diagnostic_attrs(&item);
+                    if !diagnostic_attrs.is_empty() {
+                        invocation_expn_id
+                            .set_preserved_diagnostic_attrs(Arc::from(diagnostic_attrs));
+                    }
+
                     if let SyntaxExtensionKind::Derive(..) = ext {
                         self.gate_proc_macro_input(&item);
                     }
+
+                    // Set the invocation parent for proc macro expansion
+                    self.cx.invocation_parent_expn_id = Some(invocation_expn_id);
+
                     // The `MetaItem` representing the trait to derive can't
                     // have an unsafe around it (as of now).
                     let meta = ast::MetaItem {

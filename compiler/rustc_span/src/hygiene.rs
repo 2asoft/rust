@@ -288,6 +288,18 @@ impl LocalExpnId {
         self.to_expn_id().is_descendant_of(ancestor.to_expn_id())
     }
 
+    /// Store diagnostic attributes that should be preserved through this expansion
+    pub fn set_preserved_diagnostic_attrs(self, attrs: Arc<[PreservedDiagnosticAttr]>) {
+        HygieneData::with(|data| {
+            data.preserved_diagnostic_attrs.insert(self, attrs);
+        });
+    }
+
+    /// Retrieve diagnostic attributes preserved for this expansion
+    pub fn preserved_diagnostic_attrs(self) -> Option<Arc<[PreservedDiagnosticAttr]>> {
+        HygieneData::with(|data| data.preserved_diagnostic_attrs.get(&self).cloned())
+    }
+
     /// Returns span for the macro which originally caused this expansion to happen.
     ///
     /// Stops backtracing at include! boundary.
@@ -342,6 +354,11 @@ impl ExpnId {
         HygieneData::with(|data| data.is_descendant_of(self, ancestor))
     }
 
+    /// Retrieve diagnostic attributes preserved for this expansion
+    pub fn preserved_diagnostic_attrs(self) -> Option<Arc<[PreservedDiagnosticAttr]>> {
+        self.as_local().and_then(|local| local.preserved_diagnostic_attrs())
+    }
+
     /// `expn_id.outer_expn_is_descendant_of(ctxt)` is equivalent to but faster than
     /// `expn_id.is_descendant_of(ctxt.outer_expn())`.
     #[inline]
@@ -391,6 +408,8 @@ pub(crate) struct HygieneData {
     /// The keys of this map are always computed with `ExpnData.disambiguator`
     /// set to 0.
     expn_data_disambiguators: UnhashMap<Hash64, u32>,
+    /// Diagnostic attributes preserved from pre-expansion code for each expansion
+    preserved_diagnostic_attrs: FxHashMap<LocalExpnId, Arc<[PreservedDiagnosticAttr]>>,
 }
 
 impl HygieneData {
@@ -414,6 +433,7 @@ impl HygieneData {
             syntax_context_data: vec![root_ctxt_data],
             syntax_context_map: iter::once((root_ctxt_data.key(), SyntaxContext(0))).collect(),
             expn_data_disambiguators: UnhashMap::default(),
+            preserved_diagnostic_attrs: FxHashMap::default(),
         }
     }
 
