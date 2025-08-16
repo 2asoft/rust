@@ -1,4 +1,5 @@
 use std::cmp;
+use std::sync::LazyLock;
 
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_data_structures::sorted_map::SortedMap;
@@ -12,6 +13,9 @@ use rustc_span::{DUMMY_SP, Span, Symbol, kw};
 use tracing::instrument;
 
 use crate::ty::TyCtxt;
+
+static DEBUG_DIAG_ATTRS: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok());
 
 /// How a lint level was set.
 #[derive(Clone, Copy, PartialEq, Eq, Encodable, Decodable, HashStable, Debug)]
@@ -164,18 +168,51 @@ impl ShallowLintLevelMap {
         lint: LintId,
         cur: HirId,
     ) -> LevelAndSource {
+        if *DEBUG_DIAG_ATTRS {
+            eprintln!(
+                "[DIAG_ATTR::RESOLVE_ID] lint_level_id_at_node: lint={:?}, hir_id={:?}",
+                lint, cur
+            );
+        }
+
         let (level, mut src) = self.probe_for_lint_level(tcx, lint, cur);
         let (level, lint_id) = reveal_actual_level(level, &mut src, tcx.sess, lint, |lint| {
             self.probe_for_lint_level(tcx, lint, cur)
         });
-        LevelAndSource { level, lint_id, src }
+        let result = LevelAndSource { level, lint_id, src };
+
+        if *DEBUG_DIAG_ATTRS {
+            eprintln!(
+                "[DIAG_ATTR::RESOLVE_ID]   Result: level={:?}, src={:?}",
+                result.level, result.src
+            );
+        }
+
+        result
     }
 }
 
 impl TyCtxt<'_> {
     /// Fetch and return the user-visible lint level for the given lint at the given HirId.
     pub fn lint_level_at_node(self, lint: &'static Lint, id: HirId) -> LevelAndSource {
-        self.shallow_lint_levels_on(id.owner).lint_level_id_at_node(self, LintId::of(lint), id)
+        if *DEBUG_DIAG_ATTRS {
+            eprintln!(
+                "[DIAG_ATTR::RESOLVE] lint_level_at_node: lint={:?}, hir_id={:?}",
+                lint.name, id
+            );
+        }
+
+        let result =
+            self.shallow_lint_levels_on(id.owner).lint_level_id_at_node(self, LintId::of(lint), id);
+
+        if *DEBUG_DIAG_ATTRS {
+            eprintln!(
+                "[DIAG_ATTR::RESOLVE]   Result: level={:?}, src={:?}",
+                result.level, result.src
+            );
+        }
+
+        result
     }
 }
 

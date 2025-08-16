@@ -22,6 +22,7 @@ use rustc_session::lint::builtin::{
 };
 use rustc_session::lint::{Level, Lint, LintExpectationId, LintId};
 use rustc_span::{DUMMY_SP, Span, Symbol, sym};
+use std::sync::LazyLock;
 use tracing::{debug, instrument};
 use {rustc_ast as ast, rustc_hir as hir};
 
@@ -39,6 +40,9 @@ use crate::lints::{
     RenamedLintFromCommandLine, RenamedLintSuggestion, UnknownLint, UnknownLintFromCommandLine,
     UnknownLintSuggestion,
 };
+
+static DEBUG_DIAG_ATTRS: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok());
 
 /// Collection of lint levels for the whole crate.
 /// This is used by AST-based lints, which do not
@@ -158,8 +162,16 @@ fn lints_that_dont_need_to_run(tcx: TyCtxt<'_>, (): ()) -> UnordSet<LintId> {
 
 #[instrument(level = "trace", skip(tcx), ret)]
 fn shallow_lint_levels_on(tcx: TyCtxt<'_>, owner: hir::OwnerId) -> ShallowLintLevelMap {
+    if *DEBUG_DIAG_ATTRS {
+        eprintln!("[DIAG_ATTR::SHALLOW] START processing owner={:?}", owner);
+    }
+
     let store = unerased_lint_store(tcx.sess);
     let attrs = tcx.hir_attr_map(owner);
+
+    if *DEBUG_DIAG_ATTRS {
+        eprintln!("[DIAG_ATTR::SHALLOW] Owner has {} attribute entries", attrs.map.len());
+    }
 
     let mut levels = LintLevelsBuilder {
         sess: tcx.sess,
@@ -265,6 +277,27 @@ impl LintLevelsProvider for LintLevelQueryMap<'_> {
 
 impl<'tcx> LintLevelsBuilder<'_, LintLevelQueryMap<'tcx>> {
     fn add_id(&mut self, hir_id: HirId) {
+        if *DEBUG_DIAG_ATTRS {
+            let attrs = self.provider.attrs.get(hir_id.local_id);
+            eprintln!("[DIAG_ATTR::ADD_ID] hir_id={:?}, has_attrs={}", hir_id, !attrs.is_empty());
+
+            for (attr_idx, attr) in attrs.iter().enumerate() {
+                if let Some(name) = attr.name() {
+                    if matches!(
+                        name,
+                        sym::allow | sym::warn | sym::deny | sym::forbid | sym::expect
+                    ) {
+                        eprintln!(
+                            "[DIAG_ATTR::ADD_ID] Found diag attr[{}]: name={:?}, span={:?}",
+                            attr_idx,
+                            name,
+                            attr.span()
+                        );
+                    }
+                }
+            }
+        }
+
         self.provider.cur = hir_id;
         self.add(
             self.provider.attrs.get(hir_id.local_id),
@@ -287,6 +320,13 @@ impl<'tcx> Visitor<'tcx> for LintLevelsBuilder<'_, LintLevelQueryMap<'tcx>> {
     }
 
     fn visit_item(&mut self, it: &'tcx hir::Item<'tcx>) {
+        if *DEBUG_DIAG_ATTRS {
+            eprintln!(
+                "[DIAG_ATTR::VISIT] Item: id={:?}, kind={:?}",
+                it.hir_id(),
+                std::mem::discriminant(&it.kind)
+            );
+        }
         self.add_id(it.hir_id());
         intravisit::walk_item(self, it);
     }
@@ -302,6 +342,13 @@ impl<'tcx> Visitor<'tcx> for LintLevelsBuilder<'_, LintLevelQueryMap<'tcx>> {
     }
 
     fn visit_expr(&mut self, e: &'tcx hir::Expr<'tcx>) {
+        if *DEBUG_DIAG_ATTRS {
+            eprintln!(
+                "[DIAG_ATTR::VISIT] Expr: id={:?}, kind={:?}",
+                e.hir_id,
+                std::mem::discriminant(&e.kind)
+            );
+        }
         self.add_id(e.hir_id);
         intravisit::walk_expr(self, e);
     }
@@ -337,11 +384,25 @@ impl<'tcx> Visitor<'tcx> for LintLevelsBuilder<'_, LintLevelQueryMap<'tcx>> {
     }
 
     fn visit_trait_item(&mut self, trait_item: &'tcx hir::TraitItem<'tcx>) {
+        if *DEBUG_DIAG_ATTRS {
+            eprintln!(
+                "[DIAG_ATTR::VISIT] TraitItem: id={:?}, ident={:?}",
+                trait_item.hir_id(),
+                trait_item.ident
+            );
+        }
         self.add_id(trait_item.hir_id());
         intravisit::walk_trait_item(self, trait_item);
     }
 
     fn visit_impl_item(&mut self, impl_item: &'tcx hir::ImplItem<'tcx>) {
+        if *DEBUG_DIAG_ATTRS {
+            eprintln!(
+                "[DIAG_ATTR::VISIT] ImplItem: id={:?}, ident={:?}",
+                impl_item.hir_id(),
+                impl_item.ident
+            );
+        }
         self.add_id(impl_item.hir_id());
         intravisit::walk_impl_item(self, impl_item);
     }
@@ -469,7 +530,17 @@ impl<'s, P: LintLevelsProvider> LintLevelsBuilder<'s, P> {
     }
 
     fn add_command_line(&mut self) {
+        if *DEBUG_DIAG_ATTRS {
+            eprintln!(
+                "[DIAG_ATTR::CMD] Processing {} command-line lint options",
+                self.sess.opts.lint_opts.len()
+            );
+        }
+
         for &(ref lint_name, level) in &self.sess.opts.lint_opts {
+            if *DEBUG_DIAG_ATTRS {
+                eprintln!("[DIAG_ATTR::CMD] Option: lint_name={:?}, level={:?}", lint_name, level);
+            }
             // Checks the validity of lint names derived from the command line.
             let (tool_name, lint_name_only) = parse_lint_and_tool_name(lint_name);
             if lint_name_only == crate::WARNINGS.name_lower() && matches!(level, Level::ForceWarn) {
@@ -542,6 +613,14 @@ impl<'s, P: LintLevelsProvider> LintLevelsBuilder<'s, P> {
     /// (e.g. if a forbid was already inserted on the same scope), then emits a
     /// diagnostic with no change to `specs`.
     fn insert_spec(&mut self, id: LintId, LevelAndSource { level, lint_id, src }: LevelAndSource) {
+        if *DEBUG_DIAG_ATTRS {
+            let old = self.provider.get_lint_level(id.lint, self.sess);
+            eprintln!(
+                "[DIAG_ATTR::INSERT] lint_id={:?}, new_level={:?}, new_src={:?}, old_level={:?}, old_src={:?}",
+                id, level, src, old.level, old.src
+            );
+        }
+
         let LevelAndSource { level: old_level, src: old_src, .. } =
             self.provider.get_lint_level(id.lint, self.sess);
 
@@ -642,6 +721,15 @@ impl<'s, P: LintLevelsProvider> LintLevelsBuilder<'s, P> {
         is_crate_node: bool,
         source_hir_id: Option<HirId>,
     ) {
+        if *DEBUG_DIAG_ATTRS {
+            eprintln!(
+                "[DIAG_ATTR::ADD] START: num_attrs={}, is_crate={}, source_hir_id={:?}",
+                attrs.len(),
+                is_crate_node,
+                source_hir_id
+            );
+        }
+
         let sess = self.sess;
         for (attr_index, attr) in attrs.iter().enumerate() {
             if attr.is_automatically_derived_attr() {
@@ -689,12 +777,47 @@ impl<'s, P: LintLevelsProvider> LintLevelsBuilder<'s, P> {
                         lint_index: None,
                     };
 
+                    if *DEBUG_DIAG_ATTRS {
+                        eprintln!(
+                            "[DIAG_ATTR::ADD] Attr[{}]: level={:?}, lint_id={:?}, span={:?}",
+                            attr_index,
+                            Level::Expect,
+                            Some(stable_id),
+                            attr.span()
+                        );
+                    }
+
                     (Level::Expect, Some(stable_id))
                 }
-                Some((lvl, id)) => (lvl, id),
+                Some((lvl, id)) => {
+                    if *DEBUG_DIAG_ATTRS {
+                        eprintln!(
+                            "[DIAG_ATTR::ADD] Attr[{}]: level={:?}, lint_id={:?}, span={:?}",
+                            attr_index,
+                            lvl,
+                            id,
+                            attr.span()
+                        );
+                    }
+                    (lvl, id)
+                }
             };
 
             let Some(mut metas) = attr.meta_item_list() else { continue };
+
+            if *DEBUG_DIAG_ATTRS {
+                eprintln!(
+                    "[DIAG_ATTR::ADD] Meta items for attr[{}]: count={}",
+                    attr_index,
+                    metas.len()
+                );
+
+                for (meta_idx, meta) in metas.iter().enumerate() {
+                    if let Some(ident) = meta.ident() {
+                        eprintln!("[DIAG_ATTR::ADD]   Meta[{}]: ident={:?}", meta_idx, ident);
+                    }
+                }
+            }
 
             // Check whether `metas` is empty, and get its last element.
             let Some(tail_li) = metas.last() else {

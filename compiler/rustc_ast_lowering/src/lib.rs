@@ -38,7 +38,7 @@
 #![feature(rustdoc_internals)]
 // tidy-alphabetical-end
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use rustc_ast::node_id::NodeMap;
 use rustc_ast::{self as ast, *};
@@ -88,6 +88,9 @@ mod path;
 pub mod stability;
 
 rustc_fluent_macro::fluent_messages! { "../messages.ftl" }
+
+static DEBUG_DIAG_ATTRS: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok());
 
 struct LoweringContext<'a, 'hir> {
     tcx: TyCtxt<'hir>,
@@ -944,6 +947,32 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         attrs: &[Attribute],
         target_span: Span,
     ) -> &'hir [hir::Attribute] {
+        if *DEBUG_DIAG_ATTRS {
+            eprintln!(
+                "[DIAG_ATTR::LOWER] START lower_attrs: hir_id={:?}, num_attrs={}, target_span={:?}",
+                id,
+                attrs.len(),
+                target_span
+            );
+
+            for (idx, attr) in attrs.iter().enumerate() {
+                if let Some(name) = attr.name() {
+                    if matches!(
+                        name,
+                        sym::allow | sym::warn | sym::deny | sym::forbid | sym::expect
+                    ) {
+                        eprintln!(
+                            "[DIAG_ATTR::LOWER] Found diag attr[{}]: name={:?}, span={:?}, meta_list={:?}",
+                            idx,
+                            name,
+                            attr.span(),
+                            attr.meta_item_list()
+                        );
+                    }
+                }
+            }
+        }
+
         if attrs.is_empty() {
             &[]
         } else {

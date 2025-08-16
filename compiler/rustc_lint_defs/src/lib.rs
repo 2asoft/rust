@@ -14,8 +14,12 @@ use rustc_macros::{Decodable, Encodable, HashStable_Generic};
 pub use rustc_span::edition::Edition;
 use rustc_span::{Ident, MacroRulesNormalizedIdent, Span, Symbol, sym};
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
 
 pub use self::Level::*;
+
+static DEBUG_DIAG_ATTRS: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok());
 
 pub mod builtin;
 
@@ -249,7 +253,26 @@ impl Level {
 
     /// Converts an `Attribute` to a level.
     pub fn from_attr(attr: &impl AttributeExt) -> Option<(Self, Option<LintExpectationId>)> {
-        attr.name().and_then(|name| Self::from_symbol(name, || Some(attr.id())))
+        let attr_name = attr.name();
+
+        if *DEBUG_DIAG_ATTRS {
+            eprintln!("[DIAG_ATTR::PARSE] from_attr: name={:?}", attr_name);
+        }
+
+        // Create a closure that handles the potential panic from HIR attributes
+        let get_attr_id = || {
+            // This might panic for HIR parsed attributes, but that's the existing behavior
+            // The panic will be caught by the compiler's panic handling
+            Some(attr.id())
+        };
+
+        let result = attr_name.and_then(|name| Self::from_symbol(name, get_attr_id));
+
+        if *DEBUG_DIAG_ATTRS {
+            eprintln!("[DIAG_ATTR::PARSE] from_attr result: {:?}", result);
+        }
+
+        result
     }
 
     /// Converts a `Symbol` to a level.
@@ -257,7 +280,7 @@ impl Level {
         s: Symbol,
         id: impl FnOnce() -> Option<AttrId>,
     ) -> Option<(Self, Option<LintExpectationId>)> {
-        match s {
+        let result = match s {
             sym::allow => Some((Level::Allow, None)),
             sym::expect => {
                 if let Some(attr_id) = id() {
@@ -273,7 +296,13 @@ impl Level {
             sym::deny => Some((Level::Deny, None)),
             sym::forbid => Some((Level::Forbid, None)),
             _ => None,
+        };
+
+        if *DEBUG_DIAG_ATTRS {
+            eprintln!("[DIAG_ATTR::SYMBOL] from_symbol: symbol={:?}, result={:?}", s, result);
         }
+
+        result
     }
 
     pub fn to_cmd_flag(self) -> &'static str {
