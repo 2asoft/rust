@@ -23,3 +23,6 @@ test tcname=DEFAULT_TCNAME:
     #!/usr/bin/env bash
     set -ex
     nice ../repro/test.sh {{tcname}}
+
+clippylog:
+    cat ../repro/clippy.log
