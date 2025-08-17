@@ -4,6 +4,7 @@
     "bash": {
       "just build": "allow",
       "just test": "allow",
+      "just clippylog": "allow",
       "just *": "ask"
     }
   }
