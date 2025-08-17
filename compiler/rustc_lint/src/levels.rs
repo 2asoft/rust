@@ -530,17 +530,7 @@ impl<'s, P: LintLevelsProvider> LintLevelsBuilder<'s, P> {
     }
 
     fn add_command_line(&mut self) {
-        if *DEBUG_DIAG_ATTRS {
-            eprintln!(
-                "[DIAG_ATTR::CMD] Processing {} command-line lint options",
-                self.sess.opts.lint_opts.len()
-            );
-        }
-
         for &(ref lint_name, level) in &self.sess.opts.lint_opts {
-            if *DEBUG_DIAG_ATTRS {
-                eprintln!("[DIAG_ATTR::CMD] Option: lint_name={:?}, level={:?}", lint_name, level);
-            }
             // Checks the validity of lint names derived from the command line.
             let (tool_name, lint_name_only) = parse_lint_and_tool_name(lint_name);
             if lint_name_only == crate::WARNINGS.name_lower() && matches!(level, Level::ForceWarn) {

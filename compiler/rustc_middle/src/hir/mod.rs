@@ -15,14 +15,10 @@ use rustc_hir::def_id::{DefId, LocalDefId, LocalModDefId};
 use rustc_hir::lints::DelayedLint;
 use rustc_hir::*;
 use rustc_macros::{Decodable, Encodable, HashStable};
-use rustc_span::{ErrorGuaranteed, ExpnId, Span, sym};
-use std::sync::LazyLock;
+use rustc_span::{ErrorGuaranteed, ExpnId, Span};
 
 use crate::query::Providers;
 use crate::ty::{EarlyBinder, ImplSubject, TyCtxt};
-
-static DEBUG_DIAG_ATTRS: LazyLock<bool> =
-    LazyLock::new(|| std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok());
 
 /// Gather the LocalDefId for each item-like within a module, including items contained within
 /// bodies. The Ids are in visitor order. This is used to partition a pass between modules.
@@ -253,30 +249,6 @@ pub fn provide(providers: &mut Providers) {
         let attrs = tcx.hir_crate(()).owners[id.def_id]
             .as_owner()
             .map_or(AttributeMap::EMPTY, |o| &o.attrs);
-
-        if *DEBUG_DIAG_ATTRS {
-            eprintln!(
-                "[DIAG_ATTR::STORE] hir_attr_map query: owner={:?}, num_entries={}",
-                id,
-                attrs.map.len()
-            );
-
-            for (local_id, attr_slice) in attrs.map.iter() {
-                for attr in *attr_slice {
-                    if let Some(name) = attr.name() {
-                        if matches!(
-                            name,
-                            sym::allow | sym::warn | sym::deny | sym::forbid | sym::expect
-                        ) {
-                            eprintln!(
-                                "[DIAG_ATTR::STORE]   local_id={:?}: diag_attr={:?}",
-                                local_id, name
-                            );
-                        }
-                    }
-                }
-            }
-        }
 
         attrs
     };

@@ -14,12 +14,8 @@ use rustc_macros::{Decodable, Encodable, HashStable_Generic};
 pub use rustc_span::edition::Edition;
 use rustc_span::{Ident, MacroRulesNormalizedIdent, Span, Symbol, sym};
 use serde::{Deserialize, Serialize};
-use std::sync::LazyLock;
 
 pub use self::Level::*;
-
-static DEBUG_DIAG_ATTRS: LazyLock<bool> =
-    LazyLock::new(|| std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok());
 
 pub mod builtin;
 
@@ -255,10 +251,6 @@ impl Level {
     pub fn from_attr(attr: &impl AttributeExt) -> Option<(Self, Option<LintExpectationId>)> {
         let attr_name = attr.name();
 
-        if *DEBUG_DIAG_ATTRS {
-            eprintln!("[DIAG_ATTR::PARSE] from_attr: name={:?}", attr_name);
-        }
-
         // Create a closure that handles the potential panic from HIR attributes
         let get_attr_id = || {
             // This might panic for HIR parsed attributes, but that's the existing behavior
@@ -267,10 +259,6 @@ impl Level {
         };
 
         let result = attr_name.and_then(|name| Self::from_symbol(name, get_attr_id));
-
-        if *DEBUG_DIAG_ATTRS {
-            eprintln!("[DIAG_ATTR::PARSE] from_attr result: {:?}", result);
-        }
 
         result
     }
@@ -297,10 +285,6 @@ impl Level {
             sym::forbid => Some((Level::Forbid, None)),
             _ => None,
         };
-
-        if *DEBUG_DIAG_ATTRS {
-            eprintln!("[DIAG_ATTR::SYMBOL] from_symbol: symbol={:?}, result={:?}", s, result);
-        }
 
         result
     }
