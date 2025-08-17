@@ -25,7 +25,4 @@ test tcname=DEFAULT_TCNAME:
     nice ../repro/test.sh {{tcname}}
 
 clippylog:
-    cat ../repro/clippy.log
-
-allowlog:
-    cat ../repro/allow.log
+    cat ../repro/withlog.log
