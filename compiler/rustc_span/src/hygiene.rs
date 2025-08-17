@@ -978,6 +978,17 @@ impl Span {
 }
 
 /// A subset of properties from both macro definition and macro call available through global data.
+/// A diagnostic attribute extracted from source code before macro expansion
+#[derive(Clone, Debug, Encodable, Decodable, HashStable_Generic)]
+pub struct DiagnosticAttribute {
+    /// The full lint name (e.g., "clippy::disallowed_macros", "unused_variables")
+    pub lint_name: Symbol,
+    /// The diagnostic level (allow, warn, deny, forbid, expect)
+    pub level: Symbol,
+    /// Optional reason string
+    pub reason: Option<Symbol>,
+}
+
 /// Avoid using this if you have access to the original definition or call structures.
 #[derive(Clone, Debug, Encodable, Decodable, HashStable_Generic)]
 pub struct ExpnData {
@@ -1036,7 +1047,7 @@ pub struct ExpnData {
     /// When true, we do not display the note telling people to use the `-Zmacro-backtrace` flag.
     pub hide_backtrace: bool,
     /// Diagnostic attributes for this expansion.
-    pub diagnostic_attrs: Option<Arc<[(Symbol, Symbol, Option<Symbol>)]>>,
+    pub diagnostic_attrs: Option<Arc<[DiagnosticAttribute]>>,
 }
 
 impl !PartialEq for ExpnData {}
@@ -1056,7 +1067,7 @@ impl ExpnData {
         local_inner_macros: bool,
         collapse_debuginfo: bool,
         hide_backtrace: bool,
-        diagnostic_attrs: Option<Arc<[(Symbol, Symbol, Option<Symbol>)]>>,
+        diagnostic_attrs: Option<Arc<[DiagnosticAttribute]>>,
     ) -> ExpnData {
         ExpnData {
             kind,

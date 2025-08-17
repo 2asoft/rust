@@ -25,7 +25,7 @@ use rustc_session::lint::BuiltinLintDiag;
 use rustc_session::lint::builtin::{UNUSED_ATTRIBUTES, UNUSED_DOC_COMMENTS};
 use rustc_session::parse::feature_err;
 use rustc_session::{Limit, Session};
-use rustc_span::hygiene::SyntaxContext;
+use rustc_span::hygiene::{DiagnosticAttribute, SyntaxContext};
 use rustc_span::{ErrorGuaranteed, FileName, Ident, LocalExpnId, Span, Symbol, sym};
 use smallvec::SmallVec;
 
@@ -401,7 +401,7 @@ pub enum InvocationKind {
         item: Annotatable,
         /// Required for resolving derive helper attributes.
         derives: Vec<ast::Path>,
-        diagnostic_attrs: Option<Arc<[(Symbol, Symbol, Option<Symbol>)]>>,
+        diagnostic_attrs: Option<Arc<[DiagnosticAttribute]>>,
     },
     Derive {
         path: ast::Path,
@@ -2055,7 +2055,7 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
             ast::Attribute,
             usize,
             Vec<ast::Path>,
-            Option<Arc<[(Symbol, Symbol, Option<Symbol>)]>>,
+            Option<Arc<[DiagnosticAttribute]>>,
         ),
         item: Annotatable,
         kind: AstFragmentKind,
@@ -2082,7 +2082,7 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
         ast::Attribute,
         usize,
         Vec<ast::Path>,
-        Option<Arc<[(Symbol, Symbol, Option<Symbol>)]>>,
+        Option<Arc<[DiagnosticAttribute]>>,
     )> {
         let mut attr = None;
 
@@ -2134,7 +2134,13 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
     #[allow(dead_code)]
     fn extract_diagnostic_attrs(
         attrs: &[ast::Attribute],
-    ) -> Option<Arc<[(Symbol, Symbol, Option<Symbol>)]>> {
+    ) -> Option<Arc<[rustc_span::hygiene::DiagnosticAttribute]>> {
+        if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+            eprintln!(
+                "[DIAG_ATTRS] extract_diagnostic_attrs: Processing {} attributes",
+                attrs.len()
+            );
+        }
         let mut diagnostic_attrs = Vec::new();
 
         for attr in attrs {
@@ -2156,20 +2162,84 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
                     continue;
                 };
 
+                if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                    eprintln!("[DIAG_ATTRS] Found diagnostic attribute: {:?}", level_symbol);
+                }
+
                 // Extract lint names and reasons from the meta item
                 match &meta_item.kind {
                     MetaItemKind::List(nested_items) => {
+                        if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                            eprintln!(
+                                "[DIAG_ATTRS] Processing {} nested items",
+                                nested_items.len()
+                            );
+                        }
                         for nested_item in nested_items {
                             match nested_item {
                                 MetaItemInner::MetaItem(meta) => {
+                                    if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                                        eprintln!(
+                                            "[DIAG_ATTRS] Found nested meta item with {} segments: {:?}",
+                                            meta.path.segments.len(),
+                                            meta.path
+                                                .segments
+                                                .iter()
+                                                .map(|s| s.ident.name)
+                                                .collect::<Vec<_>>()
+                                        );
+                                    }
                                     if meta.path.segments.len() == 1 {
                                         let lint_name = meta.path.segments[0].ident.name;
                                         let reason = None; // For now, we'll handle reasons later
-                                        diagnostic_attrs.push((lint_name, level_symbol, reason));
+                                        if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                                            eprintln!(
+                                                "[DIAG_ATTRS] Adding single-segment lint: {:?} with level {:?}",
+                                                lint_name, level_symbol
+                                            );
+                                        }
+                                        diagnostic_attrs.push(
+                                            rustc_span::hygiene::DiagnosticAttribute {
+                                                lint_name,
+                                                level: level_symbol,
+                                                reason,
+                                            },
+                                        );
+                                    } else if meta.path.segments.len() == 2 {
+                                        // Handle tool-prefixed lints like clippy::disallowed_macros
+                                        let tool_name = meta.path.segments[0].ident.name;
+                                        let lint_name_segment = meta.path.segments[1].ident.name;
+                                        let reason = None;
+                                        if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                                            eprintln!(
+                                                "[DIAG_ATTRS] Adding tool-prefixed lint: {}::{:?} with level {:?}",
+                                                tool_name, lint_name_segment, level_symbol
+                                            );
+                                        }
+                                        // Store the full path as the lint name for tool-prefixed lints
+                                        let full_lint_name =
+                                            format!("{}::{}", tool_name, lint_name_segment);
+                                        let lint_name = Symbol::intern(&full_lint_name);
+                                        diagnostic_attrs.push(
+                                            rustc_span::hygiene::DiagnosticAttribute {
+                                                lint_name,
+                                                level: level_symbol,
+                                                reason,
+                                            },
+                                        );
+                                    } else {
+                                        if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                                            eprintln!(
+                                                "[DIAG_ATTRS] Skipping lint with {} segments (not supported)",
+                                                meta.path.segments.len()
+                                            );
+                                        }
                                     }
                                 }
                                 MetaItemInner::Lit(_) => {
-                                    // Skip literals for now
+                                    if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                                        eprintln!("[DIAG_ATTRS] Skipping literal nested item");
+                                    }
                                 }
                             }
                         }
@@ -2185,9 +2255,33 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
             }
         }
 
+        if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+            eprintln!(
+                "[DIAG_ATTRS] extract_diagnostic_attrs: Found {} diagnostic attributes total",
+                diagnostic_attrs.len()
+            );
+            for (i, diag_attr) in diagnostic_attrs.iter().enumerate() {
+                eprintln!(
+                    "[DIAG_ATTRS]   [{}]: lint={:?}, level={:?}, reason={:?}",
+                    i, diag_attr.lint_name, diag_attr.level, diag_attr.reason
+                );
+            }
+        }
+
         if diagnostic_attrs.is_empty() {
+            if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                eprintln!(
+                    "[DIAG_ATTRS] extract_diagnostic_attrs: Returning None (no diagnostic attributes found)"
+                );
+            }
             None
         } else {
+            if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                eprintln!(
+                    "[DIAG_ATTRS] extract_diagnostic_attrs: Returning Some with {} attributes",
+                    diagnostic_attrs.len()
+                );
+            }
             Some(Arc::from(diagnostic_attrs.into_boxed_slice()))
         }
     }

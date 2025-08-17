@@ -171,34 +171,99 @@ impl ShallowLintLevelMap {
         if matches!(src, LintLevelSource::Default) {
             let span = tcx.hir_span(cur);
             if span.from_expansion() {
+                if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                    eprintln!(
+                        "[DIAG_ATTRS] lint_level_id_at_node: Checking ExpnData for lint {:?}",
+                        lint.lint.name_lower()
+                    );
+                }
                 let expn_data = span.ctxt().outer_expn_data();
                 if let Some(ref diagnostic_attrs) = expn_data.diagnostic_attrs {
                     let lint_name = lint.lint.name_lower();
-                    for &(attr_name, lint_attr, level_attr) in diagnostic_attrs.as_ref().iter() {
-                        if attr_name == sym::allow
-                            || attr_name == sym::warn
-                            || attr_name == sym::deny
-                            || attr_name == sym::forbid
+                    if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                        eprintln!(
+                            "[DIAG_ATTRS] lint_level_id_at_node: Found {} diagnostic attributes in ExpnData",
+                            diagnostic_attrs.len()
+                        );
+                        eprintln!(
+                            "[DIAG_ATTRS] lint_level_id_at_node: Looking for lint name: {:?}",
+                            lint_name
+                        );
+                    }
+                    for (i, diag_attr) in diagnostic_attrs.as_ref().iter().enumerate() {
+                        if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                            eprintln!(
+                                "[DIAG_ATTRS] lint_level_id_at_node: [{}] lint_name={:?}, level={:?}, reason={:?}",
+                                i, diag_attr.lint_name, diag_attr.level, diag_attr.reason
+                            );
+                        }
+                        if diag_attr.level == sym::allow
+                            || diag_attr.level == sym::warn
+                            || diag_attr.level == sym::deny
+                            || diag_attr.level == sym::forbid
+                            || diag_attr.level == sym::expect
                         {
-                            if lint_attr.as_str() == lint_name {
-                                let new_level = match attr_name {
-                                    sym::allow => Level::Allow,
-                                    sym::warn => Level::Warn,
-                                    sym::deny => Level::Deny,
-                                    sym::forbid => Level::Forbid,
-                                    _ => continue,
-                                };
-                                level = Some((new_level, None));
+                            if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                                eprintln!(
+                                    "[DIAG_ATTRS] lint_level_id_at_node: Comparing lint_name {:?} with looking for {:?}",
+                                    diag_attr.lint_name.as_str(),
+                                    lint_name
+                                );
+                            }
+                            if diag_attr.lint_name.as_str() == lint_name {
+                                if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                                    eprintln!(
+                                        "[DIAG_ATTRS] lint_level_id_at_node: MATCH FOUND! Setting level based on attr_name {:?}",
+                                        diag_attr.lint_name
+                                    );
+                                }
+                                level = Level::from_symbol(diag_attr.level, || None);
                                 src = LintLevelSource::Node {
-                                    name: lint_attr,
+                                    name: diag_attr.lint_name,
                                     span: expn_data.call_site,
-                                    reason: level_attr,
+                                    reason: diag_attr.reason,
                                 };
                                 break;
+                            } else {
+                                if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                                    eprintln!(
+                                        "[DIAG_ATTRS] lint_level_id_at_node: No match - {:?} != {:?}",
+                                        diag_attr.lint_name.as_str(),
+                                        lint_name
+                                    );
+                                }
+                            }
+                        } else {
+                            if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                                eprintln!(
+                                    "[DIAG_ATTRS] lint_level_id_at_node: Skipping non-level attribute: {:?}",
+                                    diag_attr.lint_name
+                                );
                             }
                         }
                     }
+                    if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                        eprintln!(
+                            "[DIAG_ATTRS] lint_level_id_at_node: Finished checking diagnostic attributes"
+                        );
+                    }
+                } else {
+                    if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                        eprintln!(
+                            "[DIAG_ATTRS] lint_level_id_at_node: No diagnostic attributes found in ExpnData"
+                        );
+                    }
                 }
+            } else {
+                if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                    eprintln!("[DIAG_ATTRS] lint_level_id_at_node: Span is not from expansion");
+                }
+            }
+        } else {
+            if std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok() {
+                eprintln!(
+                    "[DIAG_ATTRS] lint_level_id_at_node: Source is not Default, skipping ExpnData check"
+                );
             }
         }
 

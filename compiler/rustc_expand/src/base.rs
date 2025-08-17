@@ -27,7 +27,7 @@ use rustc_session::parse::ParseSess;
 use rustc_session::{Limit, Session};
 use rustc_span::def_id::{CrateNum, DefId, LocalDefId};
 use rustc_span::edition::Edition;
-use rustc_span::hygiene::{AstPass, ExpnData, ExpnKind, LocalExpnId, MacroKind};
+use rustc_span::hygiene::{AstPass, DiagnosticAttribute, ExpnData, ExpnKind, LocalExpnId, MacroKind};
 use rustc_span::source_map::SourceMap;
 use rustc_span::{DUMMY_SP, FileName, Ident, Span, Symbol, kw, sym};
 use smallvec::{SmallVec, smallvec};
@@ -1062,7 +1062,7 @@ impl SyntaxExtension {
         kind: MacroKind,
         macro_def_id: Option<DefId>,
         parent_module: Option<DefId>,
-        diagnostic_attrs: Option<Arc<[(Symbol, Symbol, Option<Symbol>)]>>,
+        diagnostic_attrs: Option<Arc<[DiagnosticAttribute]>>,
     ) -> ExpnData {
         ExpnData::new(
             ExpnKind::Macro(kind, descr),
