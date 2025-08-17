@@ -26,3 +26,6 @@ test tcname=DEFAULT_TCNAME:
 
 clippylog:
     cat ../repro/clippy.log
+
+allowlog:
+    cat ../repro/allow.log
