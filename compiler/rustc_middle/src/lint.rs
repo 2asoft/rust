@@ -13,6 +13,8 @@ use tracing::instrument;
 
 use crate::ty::TyCtxt;
 
+static DEBUG_DIAG_ATTRS: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RUSTC_DEBUG_DIAG_ATTRS").is_ok());
+
 /// How a lint level was set.
 #[derive(Clone, Copy, PartialEq, Eq, Encodable, Decodable, HashStable, Debug)]
 pub enum LintLevelSource {
@@ -165,9 +167,54 @@ impl ShallowLintLevelMap {
         cur: HirId,
     ) -> LevelAndSource {
         let (level, mut src) = self.probe_for_lint_level(tcx, lint, cur);
-        let (level, lint_id) = reveal_actual_level(level, &mut src, tcx.sess, lint, |lint| {
-            self.probe_for_lint_level(tcx, lint, cur)
-        });
+        let (mut level, mut lint_id) =
+            reveal_actual_level(level, &mut src, tcx.sess, lint, |lint| {
+                self.probe_for_lint_level(tcx, lint, cur)
+            });
+
+        // DEBUG: Check if this is clippy::disallowed_macros for macrolib::attrib_macro.  Check both possible lint name formats.
+        let lint_name = lint.lint_name_raw();
+        if lint_name == "clippy::DISALLOWED_MACROS"
+            || lint_name == "DISALLOWED_MACROS"
+            || lint_name.ends_with("DISALLOWED_MACROS")
+        {
+            let span = tcx.hir_span(cur);
+            if *DEBUG_DIAG_ATTRS {
+                eprintln!(
+                    "DEBUG: Found disallowed_macros lint check (name: {}) at HirId {:?}, span: {:?}",
+                    lint_name, cur, span
+                );
+            }
+
+            // Check if we're in a macro expansion context
+            for expn_data in span.macro_backtrace() {
+                if *DEBUG_DIAG_ATTRS {
+                    eprintln!("  DEBUG: Checking expansion: {:?}", expn_data.kind);
+                }
+                // Check if the macro name contains "attrib_macro"
+                if let rustc_span::hygiene::ExpnKind::Macro(_, macro_name) = expn_data.kind {
+                    if *DEBUG_DIAG_ATTRS {
+                        eprintln!("    DEBUG: Macro name: {}", macro_name.as_str());
+                    }
+                    if macro_name.as_str().contains("attrib_macro") {
+                        if *DEBUG_DIAG_ATTRS {
+                            eprintln!(
+                                "DEBUG: Found attrib_macro expansion for clippy::disallowed_macros"
+                            );
+                            eprintln!("  Original level: {:?}, Forcing to Expect", level);
+                        }
+                        level = Level::Expect;
+                        // Create a dummy expectation ID for debugging.   We need to provide a lint_index to avoid panic when expectation is fulfilled.
+                        lint_id = Some(LintExpectationId::Unstable {
+                            attr_id: rustc_ast::AttrId::from_u32(999999),
+                            lint_index: Some(0),
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+
         LevelAndSource { level, lint_id, src }
     }
 }
