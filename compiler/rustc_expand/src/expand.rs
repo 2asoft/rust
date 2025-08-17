@@ -401,6 +401,7 @@ pub enum InvocationKind {
         item: Annotatable,
         /// Required for resolving derive helper attributes.
         derives: Vec<ast::Path>,
+        diagnostic_attrs: Option<Arc<[(Symbol, Symbol, Option<Symbol>)]>>,
     },
     Derive {
         path: ast::Path,
@@ -687,7 +688,7 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
 
         let guar = self.cx.dcx().emit_err(RecursionLimitReached {
             span: expn_data.call_site,
-            descr: expn_data.kind.descr(),
+            descr: expn_data.kind.descr().to_string(),
             suggested_limit,
             crate_name: self.cx.ecfg.crate_name,
         });
@@ -779,7 +780,7 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
                     unreachable!();
                 }
             }
-            InvocationKind::Attr { attr, pos, mut item, derives } => {
+            InvocationKind::Attr { attr, pos, mut item, derives, diagnostic_attrs } => {
                 if let Some(expander) = ext.as_attr() {
                     self.gate_proc_macro_input(&item);
                     self.gate_proc_macro_attr_item(span, &item);
@@ -844,7 +845,13 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
                                 ExpandResult::Retry(item) => {
                                     // Reassemble the original invocation for retrying.
                                     return ExpandResult::Retry(Invocation {
-                                        kind: InvocationKind::Attr { attr, pos, item, derives },
+                                        kind: InvocationKind::Attr {
+                                            attr,
+                                            pos,
+                                            item,
+                                            derives,
+                                            diagnostic_attrs,
+                                        },
                                         ..invoc
                                     });
                                 }
@@ -2044,11 +2051,16 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
 
     fn collect_attr(
         &mut self,
-        (attr, pos, derives): (ast::Attribute, usize, Vec<ast::Path>),
+        (attr, pos, derives, diagnostic_attrs): (
+            ast::Attribute,
+            usize,
+            Vec<ast::Path>,
+            Option<Arc<[(Symbol, Symbol, Option<Symbol>)]>>,
+        ),
         item: Annotatable,
         kind: AstFragmentKind,
     ) -> AstFragment {
-        self.collect(kind, InvocationKind::Attr { attr, pos, item, derives })
+        self.collect(kind, InvocationKind::Attr { attr, pos, item, derives, diagnostic_attrs })
     }
 
     fn collect_glob_delegation(
@@ -2066,7 +2078,12 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
     fn take_first_attr(
         &self,
         item: &mut impl HasAttrs,
-    ) -> Option<(ast::Attribute, usize, Vec<ast::Path>)> {
+    ) -> Option<(
+        ast::Attribute,
+        usize,
+        Vec<ast::Path>,
+        Option<Arc<[(Symbol, Symbol, Option<Symbol>)]>>,
+    )> {
         let mut attr = None;
 
         let mut cfg_pos = None;
@@ -2086,8 +2103,9 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
         }
 
         item.visit_attrs(|attrs| {
+            let diagnostic_attrs = Self::extract_diagnostic_attrs(attrs);
             attr = Some(match (cfg_pos, attr_pos) {
-                (Some(pos), _) => (attrs.remove(pos), pos, Vec::new()),
+                (Some(pos), _) => (attrs.remove(pos), pos, Vec::new(), diagnostic_attrs),
                 (_, Some(pos)) => {
                     let attr = attrs.remove(pos);
                     let following_derives = attrs[pos..]
@@ -2104,13 +2122,74 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
                         })
                         .collect();
 
-                    (attr, pos, following_derives)
+                    (attr, pos, following_derives, diagnostic_attrs)
                 }
                 _ => return,
             });
         });
 
         attr
+    }
+
+    #[allow(dead_code)]
+    fn extract_diagnostic_attrs(
+        attrs: &[ast::Attribute],
+    ) -> Option<Arc<[(Symbol, Symbol, Option<Symbol>)]>> {
+        let mut diagnostic_attrs = Vec::new();
+
+        for attr in attrs {
+            if let Some(meta_item) = attr.meta() {
+                let path = &meta_item.path;
+
+                // Check if it's a diagnostic attribute
+                let level_symbol = if *path == sym::allow {
+                    sym::allow
+                } else if *path == sym::warn {
+                    sym::warn
+                } else if *path == sym::deny {
+                    sym::deny
+                } else if *path == sym::forbid {
+                    sym::forbid
+                } else if *path == sym::expect {
+                    sym::expect
+                } else {
+                    continue;
+                };
+
+                // Extract lint names and reasons from the meta item
+                match &meta_item.kind {
+                    MetaItemKind::List(nested_items) => {
+                        for nested_item in nested_items {
+                            match nested_item {
+                                MetaItemInner::MetaItem(meta) => {
+                                    if meta.path.segments.len() == 1 {
+                                        let lint_name = meta.path.segments[0].ident.name;
+                                        let reason = None; // For now, we'll handle reasons later
+                                        diagnostic_attrs.push((lint_name, level_symbol, reason));
+                                    }
+                                }
+                                MetaItemInner::Lit(_) => {
+                                    // Skip literals for now
+                                }
+                            }
+                        }
+                    }
+                    MetaItemKind::Word => {
+                        // Single diagnostic attribute without specific lints
+                        // This case might not be common for diagnostic attrs
+                    }
+                    MetaItemKind::NameValue(_) => {
+                        // Handle name-value pairs if needed
+                    }
+                }
+            }
+        }
+
+        if diagnostic_attrs.is_empty() {
+            None
+        } else {
+            Some(Arc::from(diagnostic_attrs.into_boxed_slice()))
+        }
     }
 
     // Detect use of feature-gated or invalid attributes on macro invocations
@@ -2195,7 +2274,7 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
     ) -> Node::OutputTy {
         loop {
             return match self.take_first_attr(&mut node) {
-                Some((attr, pos, derives)) => match attr.name() {
+                Some((attr, pos, derives, diagnostic_attrs)) => match attr.name() {
                     Some(sym::cfg) => {
                         let res = self.expand_cfg_true(&mut node, attr, pos);
                         match res {
@@ -2220,8 +2299,12 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
                     }
                     _ => {
                         Node::pre_flat_map_node_collect_attr(&self.cfg(), &attr);
-                        self.collect_attr((attr, pos, derives), node.to_annotatable(), Node::KIND)
-                            .make_ast::<Node>()
+                        self.collect_attr(
+                            (attr, pos, derives, diagnostic_attrs),
+                            node.to_annotatable(),
+                            Node::KIND,
+                        )
+                        .make_ast::<Node>()
                     }
                 },
                 None if node.is_mac_call() => {
@@ -2287,7 +2370,7 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
     ) {
         loop {
             return match self.take_first_attr(node) {
-                Some((attr, pos, derives)) => match attr.name() {
+                Some((attr, pos, derives, diagnostic_attrs)) => match attr.name() {
                     Some(sym::cfg) => {
                         let span = attr.span;
                         if self.expand_cfg_true(node, attr, pos).as_bool() {
@@ -2304,7 +2387,11 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
                     _ => {
                         let n = mem::replace(node, Node::dummy());
                         *node = self
-                            .collect_attr((attr, pos, derives), n.to_annotatable(), Node::KIND)
+                            .collect_attr(
+                                (attr, pos, derives, diagnostic_attrs),
+                                n.to_annotatable(),
+                                Node::KIND,
+                            )
                             .make_ast::<Node>()
                             .into()
                     }

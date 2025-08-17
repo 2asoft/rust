@@ -261,7 +261,13 @@ impl<'ra, 'tcx> ResolverExpand for Resolver<'ra, 'tcx> {
 
         let (mut derives, mut inner_attr, mut deleg_impl) = (&[][..], false, None);
         let (path, kind) = match invoc.kind {
-            InvocationKind::Attr { ref attr, derives: ref attr_derives, .. } => {
+            InvocationKind::Attr {
+                ref attr,
+                derives: ref attr_derives,
+                ref diagnostic_attrs,
+                ..
+            } => {
+                let _diagnostic_attrs = diagnostic_attrs.clone(); // Store for later use
                 derives = self.arenas.alloc_ast_paths(attr_derives);
                 inner_attr = attr.style == ast::AttrStyle::Inner;
                 (&attr.get_normal_item().path, MacroKind::Attr)
@@ -291,13 +297,14 @@ impl<'ra, 'tcx> ResolverExpand for Resolver<'ra, 'tcx> {
                     && self.tcx.def_kind(mod_def_id) == DefKind::Mod
             })
             .map(|&InvocationParent { parent_def: mod_def_id, .. }| mod_def_id);
-        let sugg_span = match &invoc.kind {
-            InvocationKind::Attr { item: Annotatable::Item(item), .. }
+        let (sugg_span, diagnostic_attrs) = match &invoc.kind {
+            InvocationKind::Attr { item: Annotatable::Item(item), diagnostic_attrs, .. }
                 if !item.span.from_expansion() =>
             {
-                Some(item.span.shrink_to_lo())
+                (Some(item.span.shrink_to_lo()), diagnostic_attrs.clone())
             }
-            _ => None,
+            InvocationKind::Attr { diagnostic_attrs, .. } => (None, diagnostic_attrs.clone()),
+            _ => (None, None),
         };
         let (ext, res) = self.smart_resolve_macro_path(
             path,
@@ -322,6 +329,7 @@ impl<'ra, 'tcx> ResolverExpand for Resolver<'ra, 'tcx> {
                 kind,
                 def_id,
                 def_id.map(|def_id| self.macro_def_scope(def_id).nearest_parent_mod()),
+                diagnostic_attrs,
             ),
             self.create_stable_hashing_context(),
         );

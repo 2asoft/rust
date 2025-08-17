@@ -8,7 +8,8 @@ use rustc_macros::{Decodable, Encodable, HashStable};
 use rustc_session::Session;
 use rustc_session::lint::builtin::{self, FORBIDDEN_LINT_GROUPS};
 use rustc_session::lint::{FutureIncompatibilityReason, Level, Lint, LintExpectationId, LintId};
-use rustc_span::{DUMMY_SP, Span, Symbol, kw};
+
+use rustc_span::{DUMMY_SP, Span, Symbol, kw, sym};
 use tracing::instrument;
 
 use crate::ty::TyCtxt;
@@ -164,7 +165,43 @@ impl ShallowLintLevelMap {
         lint: LintId,
         cur: HirId,
     ) -> LevelAndSource {
-        let (level, mut src) = self.probe_for_lint_level(tcx, lint, cur);
+        let (mut level, mut src) = self.probe_for_lint_level(tcx, lint, cur);
+
+        // Check if src is Default and look for ExpnData diagnostic attributes
+        if matches!(src, LintLevelSource::Default) {
+            let span = tcx.hir_span(cur);
+            if span.from_expansion() {
+                let expn_data = span.ctxt().outer_expn_data();
+                if let Some(ref diagnostic_attrs) = expn_data.diagnostic_attrs {
+                    let lint_name = lint.lint.name_lower();
+                    for &(attr_name, lint_attr, level_attr) in diagnostic_attrs.as_ref().iter() {
+                        if attr_name == sym::allow
+                            || attr_name == sym::warn
+                            || attr_name == sym::deny
+                            || attr_name == sym::forbid
+                        {
+                            if lint_attr.as_str() == lint_name {
+                                let new_level = match attr_name {
+                                    sym::allow => Level::Allow,
+                                    sym::warn => Level::Warn,
+                                    sym::deny => Level::Deny,
+                                    sym::forbid => Level::Forbid,
+                                    _ => continue,
+                                };
+                                level = Some((new_level, None));
+                                src = LintLevelSource::Node {
+                                    name: lint_attr,
+                                    span: expn_data.call_site,
+                                    reason: level_attr,
+                                };
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let (level, lint_id) = reveal_actual_level(level, &mut src, tcx.sess, lint, |lint| {
             self.probe_for_lint_level(tcx, lint, cur)
         });

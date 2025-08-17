@@ -1062,6 +1062,7 @@ impl SyntaxExtension {
         kind: MacroKind,
         macro_def_id: Option<DefId>,
         parent_module: Option<DefId>,
+        diagnostic_attrs: Option<Arc<[(Symbol, Symbol, Option<Symbol>)]>>,
     ) -> ExpnData {
         ExpnData::new(
             ExpnKind::Macro(kind, descr),
@@ -1076,6 +1077,7 @@ impl SyntaxExtension {
             self.local_inner_macros,
             self.collapse_debuginfo,
             self.builtin_name.is_some(),
+            diagnostic_attrs,
         )
     }
 }
