@@ -169,9 +169,17 @@ impl ShallowLintLevelMap {
         cur: HirId,
     ) -> LevelAndSource {
         if *DEBUG_DIAG_ATTRS {
+            let span = tcx.hir_span(cur);
             eprintln!(
                 "[DIAG_ATTR::RESOLVE_ID] lint_level_id_at_node: lint={:?}, hir_id={:?}",
                 lint, cur
+            );
+
+            // ADD THIS NEW LINE:
+            eprintln!(
+                "[DIAG_ATTR::RESOLVE_ID]   from_expansion={}, callsite={:?}",
+                span.from_expansion(),
+                if span.from_expansion() { Some(span.source_callsite()) } else { None }
             );
         }
 
@@ -196,9 +204,17 @@ impl TyCtxt<'_> {
     /// Fetch and return the user-visible lint level for the given lint at the given HirId.
     pub fn lint_level_at_node(self, lint: &'static Lint, id: HirId) -> LevelAndSource {
         if *DEBUG_DIAG_ATTRS {
+            let span = self.hir_span(id);
             eprintln!(
                 "[DIAG_ATTR::RESOLVE] lint_level_at_node: lint={:?}, hir_id={:?}",
                 lint.name, id
+            );
+
+            // ADD THIS LINE:
+            eprintln!(
+                "[DIAG_ATTR::RESOLVE]   from_expansion={}, callsite={:?}",
+                span.from_expansion(),
+                if span.from_expansion() { Some(span.source_callsite()) } else { None }
             );
         }
 

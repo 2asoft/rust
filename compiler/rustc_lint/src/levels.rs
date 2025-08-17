@@ -718,6 +718,30 @@ impl<'s, P: LintLevelsProvider> LintLevelsBuilder<'s, P> {
                 is_crate_node,
                 source_hir_id
             );
+
+            // ADD THIS BLOCK:
+            let has_diag_attrs = attrs.iter().any(|a| {
+                matches!(a.name(), Some(name) if matches!(name, sym::allow | sym::warn | sym::deny | sym::forbid | sym::expect))
+            });
+
+            if has_diag_attrs {
+                eprintln!("[DIAG_ATTR::ADD] HAS_DIAG_ATTRS at source_hir_id={:?}", source_hir_id);
+                // Log each diagnostic attribute found
+                for attr in attrs {
+                    if let Some(name) = attr.name() {
+                        if matches!(
+                            name,
+                            sym::allow | sym::warn | sym::deny | sym::forbid | sym::expect
+                        ) {
+                            eprintln!(
+                                "[DIAG_ATTR::ADD]   Found pre-expansion diag attr: {:?} at span {:?}",
+                                name,
+                                attr.span()
+                            );
+                        }
+                    }
+                }
+            }
         }
 
         let sess = self.sess;
