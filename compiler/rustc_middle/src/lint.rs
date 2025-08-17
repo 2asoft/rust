@@ -160,6 +160,46 @@ impl ShallowLintLevelMap {
         (None, LintLevelSource::Default)
     }
 
+    /// Probe for lint level at a pre-expansion callsite location.
+    /// This is used for two-phase resolution when dealing with macro-expanded code.
+    /// Returns None if no lint level is found at the callsite.
+    #[allow(dead_code)]
+    fn probe_callsite_lint_level(
+        &self,
+        tcx: TyCtxt<'_>,
+        lint: LintId,
+        callsite_span: Span,
+    ) -> Option<LevelAndSource> {
+        // Try to find the HirId that corresponds to the callsite span
+        if let Some(callsite_hir_id) = tcx.find_hir_id_by_span(callsite_span) {
+            // Check if there are lint levels at this location
+            let (level, src) = self.probe_for_lint_level(tcx, lint, callsite_hir_id);
+
+            // Only return if we found a non-default level
+            if !matches!(src, LintLevelSource::Default) {
+                // We need to convert the probe result to LevelAndSource
+                // Use reveal_actual_level to get the final level
+                let (level, lint_id) =
+                    reveal_actual_level(level, &mut src.clone(), tcx.sess, lint, |id| {
+                        self.probe_for_lint_level(tcx, id, callsite_hir_id)
+                    });
+
+                return Some(LevelAndSource { level, lint_id, src });
+            }
+        }
+
+        // Log for debugging if enabled
+        if *DEBUG_DIAG_ATTRS {
+            eprintln!(
+                "[DIAG_ATTR::TWO_PHASE] probe_callsite_lint_level: callsite_span={:?}, found_hir_id={}",
+                callsite_span,
+                tcx.find_hir_id_by_span(callsite_span).is_some()
+            );
+        }
+
+        None
+    }
+
     /// Fetch and return the user-visible lint level for the given lint at the given HirId.
     #[instrument(level = "trace", skip(self, tcx), ret)]
     pub fn lint_level_id_at_node(

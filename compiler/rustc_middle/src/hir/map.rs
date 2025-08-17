@@ -179,6 +179,35 @@ impl<'tcx> TyCtxt<'tcx> {
         self.hir_module_items(module).free_items()
     }
 
+    /// Find a HirId that matches the given span.
+    /// This is inefficient and should only be used for macro callsite resolution.
+    /// Returns None if no matching HirId is found.
+    pub fn find_hir_id_by_span(self, target_span: Span) -> Option<HirId> {
+        // Only search items that could have lint attributes
+        let crate_items = self.hir_crate_items(());
+
+        // Check all owners (items, trait items, impl items, foreign items)
+        for owner_id in crate_items.owners() {
+            // First check the owner node itself
+            let owner_hir_id = HirId { owner: owner_id, local_id: ItemLocalId::ZERO };
+            if self.hir_span(owner_hir_id) == target_span {
+                return Some(owner_hir_id);
+            }
+
+            // Then check the nodes within this owner
+            if let Some(owner_nodes) = self.opt_hir_owner_nodes(owner_id.def_id) {
+                for (local_id, _parented_node) in owner_nodes.nodes.iter_enumerated() {
+                    let hir_id = HirId { owner: owner_id, local_id };
+                    if self.hir_span(hir_id) == target_span {
+                        return Some(hir_id);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     pub fn hir_def_key(self, def_id: LocalDefId) -> DefKey {
         // Accessing the DefKey is ok, since it is part of DefPathHash.
         self.definitions_untracked().def_key(def_id)
