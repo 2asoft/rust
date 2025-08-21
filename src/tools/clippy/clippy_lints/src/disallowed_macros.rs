@@ -186,6 +186,7 @@ impl LateLintPass<'_> for DisallowedMacros {
                 | AttributeKind::Coroutine(span)
                 | AttributeKind::Linkage(_, span)
                 | AttributeKind::ShouldPanic { span, .. }
+                | AttributeKind::CustomMir(_, _, span)
                 | AttributeKind::Used { span, .. } => *span,
 
                 AttributeKind::CoherenceIsCore
