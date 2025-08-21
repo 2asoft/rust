@@ -1,5 +1,22 @@
 DEFAULT_TCNAME := "clippy_i13521"
 
+check:
+    #!/usr/bin/env bash
+    set -ex
+    # Create temp files
+    out=$(mktemp)
+    err=$(mktemp)
+
+    # Clean up on exit
+    trap "rm -f '$out' '$err'" EXIT
+
+    if ! nice ./x check >"$out" 2>"$err"; then
+        _RET=$?
+        #cat "$out" | rg -v '^Scraping '
+        cat "$err" >&2
+        exit $_RET
+    fi
+
 build tcname=DEFAULT_TCNAME:
     #!/usr/bin/env bash
     set -ex
