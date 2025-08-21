@@ -11,7 +11,7 @@ use rustc_hir::{
     AmbigArg, Attribute, Expr, ExprKind, ForeignItem, HirId, ImplItem, Item, ItemKind, OwnerId, Pat, Path, Stmt,
     TraitItem, Ty,
 };
-use rustc_lint::{LateContext, LateLintPass};
+use rustc_lint::{LateContext, LateLintPass, LintContext};
 use rustc_middle::ty::TyCtxt;
 use rustc_session::impl_lint_pass;
 use rustc_span::{ExpnId, MacroKind, Span};
@@ -90,6 +90,22 @@ impl DisallowedMacros {
     fn check(&mut self, cx: &LateContext<'_>, span: Span, derive_src: Option<OwnerId>) {
         if self.disallowed.is_empty() {
             return;
+        }
+
+        // Debug logging for disallowed_macros lint
+        if std::env::var("RUSTC_DEBUG_LINT_LEVELS").is_ok() {
+            eprintln!("=== DISALLOWED_MACROS LINT DEBUG ===");
+            eprintln!("Span: {:?}", span);
+            eprintln!("From expansion: {}", span.from_expansion());
+            eprintln!("Current HIR ID: {:?}", cx.last_node_with_lint_attrs);
+            eprintln!("Current span: {:?}", cx.tcx.hir_span(cx.last_node_with_lint_attrs));
+            if span.from_expansion() {
+                let expn_data = span.ctxt().outer_expn_data();
+                eprintln!("Expansion kind: {:?}", expn_data.kind);
+            }
+            let lint_level = cx.get_lint_level(DISALLOWED_MACROS);
+            eprintln!("Lint level: {:?}", lint_level.level);
+            eprintln!("===");
         }
 
         for mac in macro_backtrace(span) {
