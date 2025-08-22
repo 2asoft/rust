@@ -132,6 +132,47 @@ impl ShallowLintLevelMap {
         id: LintId,
         start: HirId,
     ) -> (Option<(Level, Option<LintExpectationId>)>, LintLevelSource) {
+        eprintln!("METHOD ENTRY: probe_for_lint_level called with start={:?}", start);
+        // Check if we're in a proc macro expansion context
+        let span = tcx.hir_span(start);
+        let is_proc_macro = if span.from_expansion() {
+            let expn_data = span.ctxt().outer_expn_data();
+            matches!(expn_data.kind, rustc_span::ExpnKind::Macro(rustc_span::MacroKind::Attr, _))
+        } else {
+            false
+        };
+
+        // Always print this debug message to see if the method is called
+        eprintln!("PROBE_FOR_LINT_LEVEL CALLED: {:?}, is_proc_macro: {}", start, is_proc_macro);
+
+        eprintln!("ABOUT TO CHECK is_proc_macro: {}", is_proc_macro);
+        if is_proc_macro {
+            eprintln!("PROC MACRO EXPANSION DETECTED in probe_for_lint_level: {:?}", start);
+            eprintln!("ENTERING PROC MACRO HANDLING BLOCK");
+            // Walk up the HIR tree to find the original node with diagnostic attributes
+            eprintln!("STARTING HIR TREE WALK FOR: {:?}", start);
+            let mut parent_count = 0;
+            let parent_iter = tcx.hir_parent_id_iter(start);
+            eprintln!("PARENT ITERATOR CREATED");
+            for parent in parent_iter {
+                parent_count += 1;
+                eprintln!("CHECKING PARENT {}: {:?}", parent_count, parent);
+                eprintln!("  Parent local_id: {:?}", parent.local_id);
+                eprintln!(
+                    "  Has specs for local_id: {}",
+                    self.specs.get(&parent.local_id).is_some()
+                );
+                if let Some(map) = self.specs.get(&parent.local_id) {
+                    eprintln!("  Map contains lint: {}", map.get(&id).is_some());
+                    if let Some(&LevelAndSource { level, lint_id, src }) = map.get(&id) {
+                        eprintln!("FOUND LINT LEVEL IN PARENT: {:?}, level: {:?}", parent, level);
+                        return (Some((level, lint_id)), src);
+                    }
+                }
+            }
+            eprintln!("NO PARENTS FOUND WITH LINT LEVEL - checked {} parents", parent_count);
+        }
+
         if let Some(map) = self.specs.get(&start.local_id)
             && let Some(&LevelAndSource { level, lint_id, src }) = map.get(&id)
         {
@@ -175,6 +216,7 @@ impl ShallowLintLevelMap {
 impl TyCtxt<'_> {
     /// Fetch and return the user-visible lint level for the given lint at the given HirId.
     pub fn lint_level_at_node(self, lint: &'static Lint, id: HirId) -> LevelAndSource {
+        eprintln!("LINT_LEVEL_AT_NODE CALLED: lint={}, id={:?}", lint.name, id);
         self.shallow_lint_levels_on(id.owner).lint_level_id_at_node(self, LintId::of(lint), id)
     }
 }

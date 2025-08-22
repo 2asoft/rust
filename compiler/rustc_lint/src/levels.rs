@@ -256,6 +256,21 @@ impl LintLevelsProvider for LintLevelQueryMap<'_> {
         self.specs.specs.get_mut_or_insert_default(self.cur.local_id).insert(id, lvl);
     }
     fn get_lint_level(&self, lint: &'static Lint, _: &Session) -> LevelAndSource {
+        eprintln!("LINT LEVEL QUERY MAP: Called with HIR ID {:?}", self.cur);
+
+        // Check if we're in a proc macro expansion context
+        let span = self.tcx.hir_span(self.cur);
+        let is_proc_macro = if span.from_expansion() {
+            let expn_data = span.ctxt().outer_expn_data();
+            matches!(expn_data.kind, rustc_span::ExpnKind::Macro(rustc_span::MacroKind::Attr, _))
+        } else {
+            false
+        };
+
+        if is_proc_macro {
+            eprintln!("PROC MACRO EXPANSION DETECTED in LintLevelQueryMap: {:?}", self.cur);
+        }
+
         self.specs.lint_level_id_at_node(self.tcx, LintId::of(lint), self.cur)
     }
     fn push_expectation(&mut self, id: LintExpectationId, expectation: LintExpectation) {

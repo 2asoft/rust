@@ -103,6 +103,7 @@ impl DisallowedMacros {
                 let expn_data = span.ctxt().outer_expn_data();
                 eprintln!("Expansion kind: {:?}", expn_data.kind);
             }
+            eprintln!("About to call get_lint_level for DISALLOWED_MACROS");
             let lint_level = cx.get_lint_level(DISALLOWED_MACROS);
             eprintln!("Lint level: {:?}", lint_level.level);
             eprintln!("===");
