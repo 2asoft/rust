@@ -104,21 +104,45 @@ fn foo() {}
 
 **Approach**: Modify `get_lint_level()` in `compiler/rustc_lint/src/context.rs` to detect proc macro expansion and walk up the HIR tree to find the original node.
 
-**Implementation**:
-```rust
-fn get_lint_level(&self, lint: &'static Lint) -> LevelAndSource {
-    let mut current_id = self.last_node_with_lint_attrs;
-
-    // Check if we're in a proc macro expansion
-    if self.is_in_proc_macro_expansion(current_id) {
-        // Walk up the HIR tree to find the original node
-        if let Some(original_id) = self.find_original_node_with_attrs(current_id) {
-            current_id = original_id;
+> Code prior
+```rust title=compiler/rustc_lint/src/context.rs:648:673
+    fn get_lint_level(&self, lint: &'static Lint) -> LevelAndSource {
+        let is_proc_macro = self.is_in_proc_macro_expansion(self.last_node_with_lint_attrs);
+        if is_proc_macro {
+            eprintln!("PROC MACRO EXPANSION DETECTED: {:?}", self.last_node_with_lint_attrs);
         }
-    }
 
-    self.tcx.lint_level_at_node(lint, current_id)
-}
+        // Debug logging for lint level resolution - only when RUSTC_DEBUG_LINT_LEVELS is set
+        if std::env::var("RUSTC_DEBUG_LINT_LEVELS").is_ok() {
+            let span = self.tcx.hir_span(self.last_node_with_lint_attrs);
+            eprintln!("=== LINT LEVEL DEBUG ===");
+            eprintln!("Lint: {}", lint.name);
+            eprintln!("Current HIR ID: {:?}", self.last_node_with_lint_attrs);
+            eprintln!("Span: {:?}", span);
+            eprintln!("From expansion: {}", span.from_expansion());
+            eprintln!("Is proc macro expansion: {}", is_proc_macro);
+            if span.from_expansion() {
+                let expn_data = span.ctxt().outer_expn_data();
+                eprintln!("Expansion kind: {:?}", expn_data.kind);
+                eprintln!("Expansion call site: {:?}", expn_data.call_site);
+            }
+            eprintln!("===");
+        }
+
+        self.tcx.lint_level_at_node(lint, self.last_node_with_lint_attrs)
+    }
+```
+
+> Code after
+```rust title=compiler/rustc_lint/src/context.rs:648:673
+    fn get_lint_level(&self, lint: &'static Lint) -> LevelAndSource {
+        let is_proc_macro = self.is_in_proc_macro_expansion(self.last_node_with_lint_attrs);
+        if is_proc_macro {
+            eprintln!("PROC MACRO EXPANSION DETECTED: {:?}", self.last_node_with_lint_attrs);
+        }
+
+        self.tcx.lint_level_at_node(lint, self.last_node_with_lint_attrs)
+    }
 ```
 
 **Helper Methods Added**:
@@ -161,42 +185,64 @@ RUSTC_DEBUG_EXPAND_ATTRS=1 just test
 
 **Implementation Location**: `compiler/rustc_expand/src/expand.rs` in the attribute proc macro expansion handler.
 
-**Code Added**:
-```rust
-// Extract diagnostic attributes from the original item before parsing
-let diagnostic_attrs = {
-    match &item {
-        Annotatable::Item(item) => item
-            .attrs
-            .iter()
-            .filter(|attr| {
-                attr.name().map_or(false, |name| {
-                    matches!(
-                        name,
-                        sym::expect
-                            | sym::allow
-                            | sym::warn
-                            | sym::deny
-                            | sym::forbid
-                    )
-                })
-            })
-            .cloned()
-            .collect::<Vec<_>>(),
-        _ => Vec::new(),
-    }
-};
+> Code prior
+```rust title=compiler/rustc_expand/src/expand.rs:833:837
+                    match expander.expand(self.cx, span, inner_tokens, tokens) {
+                        Ok(tok_result) => {
+                            let fragment = self.parse_ast_fragment(
+                                tok_result,
+                                fragment_kind,
+                                &attr_item.path,
+                                span,
+                            );
+```
 
-// After parsing expanded tokens:
-if !diagnostic_attrs.is_empty() {
-    fragment.mut_visit_with(&mut DiagnosticAttrApplier {
-        attrs: diagnostic_attrs,
-    });
-}
+> Code after
+```rust title=compiler/rustc_expand/src/expand.rs:833:860
+                    match expander.expand(self.cx, span, inner_tokens, tokens) {
+                        Ok(tok_result) => {
+                            // Extract diagnostic attributes from the original item before parsing
+                            let diagnostic_attrs = {
+                                match &item {
+                                    Annotatable::Item(item) => item
+                                        .attrs
+                                        .iter()
+                                        .filter(|attr| {
+                                            attr.name().map_or(false, |name| {
+                                                matches!(
+                                                    name,
+                                                    sym::expect
+                                                        | sym::allow
+                                                        | sym::warn
+                                                        | sym::deny
+                                                        | sym::forbid
+                                                )
+                                            })
+                                        })
+                                        .cloned()
+                                        .collect::<Vec<_>>(),
+                                    _ => Vec::new(),
+                                }
+                            };
+
+                            let mut fragment = self.parse_ast_fragment(
+                                tok_result,
+                                fragment_kind,
+                                &attr_item.path,
+                                span,
+                            );
+
+                            // Apply diagnostic attributes to the expanded fragment
+                            if !diagnostic_attrs.is_empty() {
+                                fragment.mut_visit_with(&mut DiagnosticAttrApplier {
+                                    attrs: diagnostic_attrs,
+                                });
+                            }
 ```
 
 **Helper Added**:
-```rust
+```rust title=compiler/rustc_expand/src/expand.rs:47:65
+/// Visitor to apply diagnostic attributes to expanded AST fragments
 struct DiagnosticAttrApplier {
     attrs: Vec<ast::Attribute>,
 }
@@ -227,10 +273,139 @@ just test
 **Task**: Remove debug logging that was added during investigation.
 
 **Files Cleaned**:
-- `compiler/rustc_expand/src/expand.rs`: Removed debug logging from expansion handler
-- `compiler/rustc_expand/src/placeholders.rs`: Removed debug logging from all methods
-- `compiler/rustc_expand/src/proc_macro.rs`: Removed debug logging from derive handler
-- `compiler/rustc_lint/src/context.rs`: Removed debug logging from lint level checking
+
+> Code prior (expand.rs)
+```rust title=compiler/rustc_expand/src/expand.rs:833:860
+                    match expander.expand(self.cx, span, inner_tokens, tokens) {
+                        Ok(tok_result) => {
+                            // Extract diagnostic attributes from the original item before parsing
+                            let diagnostic_attrs = {
+                                match &item {
+                                    Annotatable::Item(item) => item
+                                        .attrs
+                                        .iter()
+                                        .filter(|attr| {
+                                            attr.name().map_or(false, |name| {
+                                                matches!(
+                                                    name,
+                                                    sym::expect
+                                                        | sym::allow
+                                                        | sym::warn
+                                                        | sym::deny
+                                                        | sym::forbid
+                                                )
+                                            })
+                                        })
+                                        .cloned()
+                                        .collect::<Vec<_>>(),
+                                    _ => Vec::new(),
+                                }
+                            };
+
+                            let mut fragment = self.parse_ast_fragment(
+                                tok_result,
+                                fragment_kind,
+                                &attr_item.path,
+                                span,
+                            );
+
+                            // Apply diagnostic attributes to the expanded fragment
+                            if !diagnostic_attrs.is_empty() {
+                                if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
+                                    eprintln!(
+                                        "=== PROC MACRO DEBUG: Applying {} diagnostic attrs to expanded fragment ===",
+                                        diagnostic_attrs.len()
+                                    );
+                                }
+                                fragment.mut_visit_with(&mut DiagnosticAttrApplier {
+                                    attrs: diagnostic_attrs,
+                                });
+                            }
+```
+
+> Code after (expand.rs)
+```rust title=compiler/rustc_expand/src/expand.rs:833:860
+                    match expander.expand(self.cx, span, inner_tokens, tokens) {
+                        Ok(tok_result) => {
+                            // Extract diagnostic attributes from the original item before parsing
+                            let diagnostic_attrs = {
+                                match &item {
+                                    Annotatable::Item(item) => item
+                                        .attrs
+                                        .iter()
+                                        .filter(|attr| {
+                                            attr.name().map_or(false, |name| {
+                                                matches!(
+                                                    name,
+                                                    sym::expect
+                                                        | sym::allow
+                                                        | sym::warn
+                                                        | sym::deny
+                                                        | sym::forbid
+                                                )
+                                            })
+                                        })
+                                        .cloned()
+                                        .collect::<Vec<_>>(),
+                                    _ => Vec::new(),
+                                }
+                            };
+
+                            let mut fragment = self.parse_ast_fragment(
+                                tok_result,
+                                fragment_kind,
+                                &attr_item.path,
+                                span,
+                            );
+
+                            // Apply diagnostic attributes to the expanded fragment
+                            if !diagnostic_attrs.is_empty() {
+                                fragment.mut_visit_with(&mut DiagnosticAttrApplier {
+                                    attrs: diagnostic_attrs,
+                                });
+                            }
+```
+
+> Code prior (context.rs)
+```rust title=compiler/rustc_lint/src/context.rs:648:673
+    fn get_lint_level(&self, lint: &'static Lint) -> LevelAndSource {
+        let is_proc_macro = self.is_in_proc_macro_expansion(self.last_node_with_lint_attrs);
+        if is_proc_macro {
+            eprintln!("PROC MACRO EXPANSION DETECTED: {:?}", self.last_node_with_lint_attrs);
+        }
+
+        // Debug logging for lint level resolution - only when RUSTC_DEBUG_LINT_LEVELS is set
+        if std::env::var("RUSTC_DEBUG_LINT_LEVELS").is_ok() {
+            let span = self.tcx.hir_span(self.last_node_with_lint_attrs);
+            eprintln!("=== LINT LEVEL DEBUG ===");
+            eprintln!("Lint: {}", lint.name);
+            eprintln!("Current HIR ID: {:?}", self.last_node_with_lint_attrs);
+            eprintln!("Span: {:?}", span);
+            eprintln!("From expansion: {}", span.from_expansion());
+            eprintln!("Is proc macro expansion: {}", is_proc_macro);
+            if span.from_expansion() {
+                let expn_data = span.ctxt().outer_expn_data();
+                eprintln!("Expansion kind: {:?}", expn_data.kind);
+                eprintln!("Expansion call site: {:?}", expn_data.call_site);
+            }
+            eprintln!("===");
+        }
+
+        self.tcx.lint_level_at_node(lint, self.last_node_with_lint_attrs)
+    }
+```
+
+> Code after (context.rs)
+```rust title=compiler/rustc_lint/src/context.rs:648:673
+    fn get_lint_level(&self, lint: &'static Lint) -> LevelAndSource {
+        let is_proc_macro = self.is_in_proc_macro_expansion(self.last_node_with_lint_attrs);
+        if is_proc_macro {
+            eprintln!("PROC MACRO EXPANSION DETECTED: {:?}", self.last_node_with_lint_attrs);
+        }
+
+        self.tcx.lint_level_at_node(lint, self.last_node_with_lint_attrs)
+    }
+```
 
 **Result**: ✅ **SUCCESS** - All debug logging removed, fix still working.
 
