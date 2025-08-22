@@ -39,10 +39,10 @@ build tcname=DEFAULT_TCNAME:
 test tcname=DEFAULT_TCNAME:
     #!/usr/bin/env bash
     set -ex
-    RUSTC_DEBUG_LINT_LEVELS=1 nice ./repro/test.sh {{tcname}}
+    nice ./repro/test.sh {{tcname}}
 
 repro tcname=DEFAULT_TCNAME:
     #!/usr/bin/env bash
     set -ex
     cd ./repro
-    RUSTC_DEBUG_LINT_LEVELS=1 nice cargo build
+    nice cargo build
