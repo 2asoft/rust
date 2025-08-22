@@ -867,12 +867,6 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
 
                             // Apply diagnostic attributes to the expanded fragment
                             if !diagnostic_attrs.is_empty() {
-                                if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
-                                    eprintln!(
-                                        "=== PROC MACRO DEBUG: Applying {} diagnostic attrs to expanded fragment ===",
-                                        diagnostic_attrs.len()
-                                    );
-                                }
                                 fragment.mut_visit_with(&mut DiagnosticAttrApplier {
                                     attrs: diagnostic_attrs,
                                 });

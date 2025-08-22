@@ -653,23 +653,6 @@ impl<'tcx> LintContext for LateContext<'tcx> {
             eprintln!("PROC MACRO EXPANSION DETECTED: {:?}", self.last_node_with_lint_attrs);
         }
 
-        // Debug logging for lint level resolution - only when RUSTC_DEBUG_LINT_LEVELS is set
-        if std::env::var("RUSTC_DEBUG_LINT_LEVELS").is_ok() {
-            let span = self.tcx.hir_span(self.last_node_with_lint_attrs);
-            eprintln!("=== LINT LEVEL DEBUG ===");
-            eprintln!("Lint: {}", lint.name);
-            eprintln!("Current HIR ID: {:?}", self.last_node_with_lint_attrs);
-            eprintln!("Span: {:?}", span);
-            eprintln!("From expansion: {}", span.from_expansion());
-            eprintln!("Is proc macro expansion: {}", is_proc_macro);
-            if span.from_expansion() {
-                let expn_data = span.ctxt().outer_expn_data();
-                eprintln!("Expansion kind: {:?}", expn_data.kind);
-                eprintln!("Expansion call site: {:?}", expn_data.call_site);
-            }
-            eprintln!("===");
-        }
-
         self.tcx.lint_level_at_node(lint, self.last_node_with_lint_attrs)
     }
 }

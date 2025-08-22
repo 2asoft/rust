@@ -183,12 +183,6 @@ impl MultiItemModifier for DeriveProcMacro {
                 Ok(Some(mut item)) => {
                     // Apply diagnostic attributes from the original item to the expanded item
                     if !diagnostic_attrs.is_empty() {
-                        if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
-                            eprintln!(
-                                "=== PROC MACRO DEBUG: Applying {} diagnostic attrs to expanded item ===",
-                                diagnostic_attrs.len()
-                            );
-                        }
                         // Prepend diagnostic attributes to preserve their position
                         let mut new_attrs = diagnostic_attrs.clone();
                         new_attrs.extend(item.attrs.iter().cloned());
