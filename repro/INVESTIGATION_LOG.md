@@ -1,5 +1,42 @@
 # Proc Macro Diagnostic Attributes Investigation Log
 
+## Investigation Summary - How We Arrived at the Solution
+
+### Initial Problem Analysis
+**Assumption**: Diagnostic attributes don't work on proc macro items because lint checking uses wrong HIR node
+**Verification**: Added debug logging to `get_lint_level()` showing HIR IDs and lint levels
+**Result**: Confirmed lint checking uses expanded code's HIR node instead of original node with attributes
+**Next Step Reasoning**: Need to modify lint level resolution to find original node with diagnostic attributes
+
+### HIR Tree Walking Approach
+**Assumption**: Can walk up HIR tree to find original node with `#[expect]` attributes
+**Verification**: Implemented `is_in_proc_macro_expansion()` and `find_original_node_with_attrs()` methods
+**Result**: Methods worked but didn't solve the problem - attributes still not found
+**Next Step Reasoning**: Issue might not be HIR tree walking but attribute processing itself
+
+### Attribute Processing Investigation
+**Assumption**: `#[expect]` attributes aren't being converted to lint level specifications
+**Verification**: Added debug logging to `shallow_lint_levels_on()` and attribute processing pipeline
+**Result**: Found attributes present on original items but missing from expanded items
+**Next Step Reasoning**: Problem is at expansion level - attributes being lost during proc macro expansion
+
+### Expansion-Level Investigation
+**Assumption**: Diagnostic attributes are lost during proc macro token expansion and parsing
+**Verification**: Added debug logging to `expand.rs` showing attribute flow during expansion
+**Result**: Confirmed diagnostic attributes present before expansion, missing after expansion
+**Next Step Reasoning**: Need to preserve diagnostic attributes during the expansion process
+
+### Working Solution Implementation
+**Assumption**: Can intercept proc macro expansion to preserve diagnostic attributes
+**Verification**: Implemented `DiagnosticAttrApplier` in `expand.rs` to transfer attributes to expanded items
+**Result**: ✅ **SUCCESS** - `#[expect(clippy::disallowed_macros)]` now works on proc macro items
+**Final Verification**: `just test` shows no lint errors, compilation successful
+
+### Cleanup and Optimization
+**Assumption**: Debug logging can be safely removed without breaking the fix
+**Verification**: Removed debug logging from all modified files, re-tested functionality
+**Result**: ✅ Clean codebase with working fix, no performance impact
+
 ## Goal and Purpose
 
 This file serves as a comprehensive log to track the investigation and resolution of the issue where diagnostic attributes (`#[expect]`, `#[allow]`, etc.) don't work on proc macro attributes. The purpose is to:
