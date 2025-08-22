@@ -3,7 +3,7 @@ use rustc_ast::token::Delimiter;
 use rustc_ast::visit::AssocCtxt;
 use rustc_ast::{self as ast, Safety};
 use rustc_data_structures::fx::FxHashMap;
-use rustc_span::{DUMMY_SP, Ident};
+use rustc_span::{DUMMY_SP, Ident, sym};
 use smallvec::{SmallVec, smallvec};
 use thin_vec::ThinVec;
 
@@ -224,22 +224,66 @@ pub(crate) struct PlaceholderExpander {
 }
 
 impl PlaceholderExpander {
+    /// Extract diagnostic attributes (expect, allow, warn, deny, forbid) from an item
+    fn extract_diagnostic_attrs(&self, item: &ast::Item) -> Vec<ast::Attribute> {
+        item.attrs
+            .iter()
+            .filter(|attr| {
+                attr.name().map_or(false, |name| {
+                    matches!(name, sym::expect | sym::allow | sym::warn | sym::deny | sym::forbid)
+                })
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Apply diagnostic attributes to expanded items
+    fn apply_diagnostic_attrs(&self, items: &mut [Box<ast::Item>], attrs: Vec<ast::Attribute>) {
+        if attrs.is_empty() {
+            return;
+        }
+
+        // Add diagnostic attributes to each expanded item
+        for item in items.iter_mut() {
+            // Prepend diagnostic attributes to preserve their position
+            let mut new_attrs = attrs.clone();
+            new_attrs.extend(item.attrs.iter().cloned());
+            item.attrs = new_attrs.into();
+        }
+    }
+
     pub(crate) fn add(&mut self, id: ast::NodeId, mut fragment: AstFragment) {
-        // Debug logging for attribute tracking
+        // Debug logging for attribute tracking - only for fragments with diagnostic attributes
         if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
-            eprintln!("=== EXPAND DEBUG: Adding fragment for NodeId {:?} ===", id);
-            eprintln!("Fragment type: {:?}", std::mem::discriminant(&fragment));
-            // Log attributes on expanded items by creating a simple visitor
-            struct AttrLogger;
-            impl<'a> ast::visit::Visitor<'a> for AttrLogger {
-                type Result = ();
-                fn visit_item(&mut self, item: &'a ast::Item) {
-                    eprintln!("Expanded item attrs: {:?}", item.attrs);
+            let has_diagnostic_attrs = match &fragment {
+                AstFragment::Items(items) => items.iter().any(|item| {
+                    item.attrs.iter().any(|attr| {
+                        attr.name().map_or(false, |name| {
+                            matches!(
+                                name,
+                                sym::expect | sym::allow | sym::warn | sym::deny | sym::forbid
+                            )
+                        })
+                    })
+                }),
+                _ => false,
+            };
+
+            if has_diagnostic_attrs {
+                eprintln!("=== EXPAND DEBUG: Adding fragment for NodeId {:?} ===", id);
+                eprintln!("Fragment type: {:?}", std::mem::discriminant(&fragment));
+                // Log attributes on expanded items by creating a simple visitor
+                struct AttrLogger;
+                impl<'a> ast::visit::Visitor<'a> for AttrLogger {
+                    type Result = ();
+                    fn visit_item(&mut self, item: &'a ast::Item) {
+                        eprintln!("Expanded item attrs: {:?}", item.attrs);
+                    }
                 }
+                let mut logger = AttrLogger;
+                fragment.visit_with(&mut logger);
+                eprintln!("===");
             }
-            let mut logger = AttrLogger;
-            fragment.visit_with(&mut logger);
-            eprintln!("===");
         }
 
         fragment.mut_visit_with(self);
@@ -323,22 +367,62 @@ impl MutVisitor for PlaceholderExpander {
     }
 
     fn flat_map_item(&mut self, item: Box<ast::Item>) -> SmallVec<[Box<ast::Item>; 1]> {
-        // Debug logging for attribute tracking
+        // Debug logging for attribute tracking - only for items with diagnostic attributes
         if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
-            eprintln!("=== EXPAND DEBUG: flat_map_item for {:?} ===", item.id);
-            eprintln!("Original item attrs: {:?}", item.attrs);
-            eprintln!("Item kind: {:?}", item.kind);
+            let has_diagnostic_attrs = item.attrs.iter().any(|attr| {
+                attr.name().map_or(false, |name| {
+                    matches!(name, sym::expect | sym::allow | sym::warn | sym::deny | sym::forbid)
+                })
+            });
+
+            if has_diagnostic_attrs {
+                eprintln!("=== EXPAND DEBUG: flat_map_item for {:?} ===", item.id);
+                eprintln!("Original item attrs: {:?}", item.attrs);
+                eprintln!("Item kind: {:?}", item.kind);
+            }
         }
 
         match item.kind {
             ast::ItemKind::MacCall(_) => {
-                let expanded_items = self.remove(item.id).make_items();
+                let mut expanded_items = self.remove(item.id).make_items();
+
+                // Transfer diagnostic attributes from original item to expanded items
+                let diagnostic_attrs = self.extract_diagnostic_attrs(&item);
+                if !diagnostic_attrs.is_empty() {
+                    let items_slice = expanded_items.as_mut_slice();
+                    self.apply_diagnostic_attrs(items_slice, diagnostic_attrs);
+                }
+
                 if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
-                    eprintln!("Expanded items count: {}", expanded_items.len());
-                    for (i, expanded_item) in expanded_items.iter().enumerate() {
-                        eprintln!("Expanded item {} attrs: {:?}", i, expanded_item.attrs);
+                    // Only log if original item had diagnostic attributes
+                    let original_item = self.expanded_fragments.get(&item.id);
+                    if let Some(fragment) = original_item {
+                        let has_diagnostic_attrs = match fragment {
+                            AstFragment::Items(items) => items.iter().any(|item| {
+                                item.attrs.iter().any(|attr| {
+                                    attr.name().map_or(false, |name| {
+                                        matches!(
+                                            name,
+                                            sym::expect
+                                                | sym::allow
+                                                | sym::warn
+                                                | sym::deny
+                                                | sym::forbid
+                                        )
+                                    })
+                                })
+                            }),
+                            _ => false,
+                        };
+
+                        if has_diagnostic_attrs {
+                            eprintln!("Expanded items count: {}", expanded_items.len());
+                            for (i, expanded_item) in expanded_items.iter().enumerate() {
+                                eprintln!("Expanded item {} attrs: {:?}", i, expanded_item.attrs);
+                            }
+                            eprintln!("===");
+                        }
                     }
-                    eprintln!("===");
                 }
                 expanded_items
             }
