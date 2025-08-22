@@ -382,51 +382,52 @@ impl MutVisitor for PlaceholderExpander {
             }
         }
 
+        // Check if this item has diagnostic attributes that need to be transferred
+        let diagnostic_attrs = self.extract_diagnostic_attrs(&item);
+        let has_diagnostic_attrs = !diagnostic_attrs.is_empty();
+
+        if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() && has_diagnostic_attrs {
+            eprintln!("=== EXPAND DEBUG: flat_map_item for {:?} ===", item.id);
+            eprintln!("Original item attrs: {:?}", item.attrs);
+            eprintln!("Item kind: {:?}", item.kind);
+            eprintln!("Diagnostic attrs found: {}", diagnostic_attrs.len());
+        }
+
         match item.kind {
             ast::ItemKind::MacCall(_) => {
                 let mut expanded_items = self.remove(item.id).make_items();
 
                 // Transfer diagnostic attributes from original item to expanded items
-                let diagnostic_attrs = self.extract_diagnostic_attrs(&item);
-                if !diagnostic_attrs.is_empty() {
+                if has_diagnostic_attrs {
                     let items_slice = expanded_items.as_mut_slice();
                     self.apply_diagnostic_attrs(items_slice, diagnostic_attrs);
                 }
 
-                if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
-                    // Only log if original item had diagnostic attributes
-                    let original_item = self.expanded_fragments.get(&item.id);
-                    if let Some(fragment) = original_item {
-                        let has_diagnostic_attrs = match fragment {
-                            AstFragment::Items(items) => items.iter().any(|item| {
-                                item.attrs.iter().any(|attr| {
-                                    attr.name().map_or(false, |name| {
-                                        matches!(
-                                            name,
-                                            sym::expect
-                                                | sym::allow
-                                                | sym::warn
-                                                | sym::deny
-                                                | sym::forbid
-                                        )
-                                    })
-                                })
-                            }),
-                            _ => false,
-                        };
-
-                        if has_diagnostic_attrs {
-                            eprintln!("Expanded items count: {}", expanded_items.len());
-                            for (i, expanded_item) in expanded_items.iter().enumerate() {
-                                eprintln!("Expanded item {} attrs: {:?}", i, expanded_item.attrs);
-                            }
-                            eprintln!("===");
-                        }
+                if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() && has_diagnostic_attrs {
+                    eprintln!("Expanded items count: {}", expanded_items.len());
+                    for (i, expanded_item) in expanded_items.iter().enumerate() {
+                        eprintln!("Expanded item {} attrs: {:?}", i, expanded_item.attrs);
                     }
+                    eprintln!("===");
                 }
                 expanded_items
             }
-            _ => walk_flat_map_item(self, item),
+            _ => {
+                // Even if this isn't a macro call, if it has diagnostic attributes,
+                // we should preserve them (this handles cases where expansion happened elsewhere)
+                if has_diagnostic_attrs {
+                    if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
+                        eprintln!("Preserving diagnostic attrs on non-macro item: {:?}", item.id);
+                    }
+                    // For non-macro items with diagnostic attributes, we need to ensure they're preserved
+                    // This might be a case where the expansion happened at a different level
+                    let new_item = item.clone();
+                    // The diagnostic attributes should already be there, but let's make sure
+                    walk_flat_map_item(self, new_item)
+                } else {
+                    walk_flat_map_item(self, item)
+                }
+            }
         }
     }
 
