@@ -252,6 +252,99 @@ impl PlaceholderExpander {
         }
     }
 
+    /// Extract diagnostic attributes from an associated item
+    fn extract_diagnostic_attrs_from_assoc_item(
+        &self,
+        item: &ast::AssocItem,
+    ) -> Vec<ast::Attribute> {
+        item.attrs
+            .iter()
+            .filter(|attr| {
+                attr.name().map_or(false, |name| {
+                    matches!(name, sym::expect | sym::allow | sym::warn | sym::deny | sym::forbid)
+                })
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Apply diagnostic attributes to expanded associated items
+    fn apply_diagnostic_attrs_to_assoc_items(
+        &self,
+        items: &mut [Box<ast::AssocItem>],
+        attrs: Vec<ast::Attribute>,
+    ) {
+        if attrs.is_empty() {
+            return;
+        }
+
+        // Add diagnostic attributes to each expanded associated item
+        for item in items.iter_mut() {
+            let mut new_attrs = attrs.clone();
+            new_attrs.extend(item.attrs.iter().cloned());
+            item.attrs = new_attrs.into();
+        }
+    }
+
+    /// Extract diagnostic attributes from a foreign item
+    fn extract_diagnostic_attrs_from_foreign_item(
+        &self,
+        item: &ast::ForeignItem,
+    ) -> Vec<ast::Attribute> {
+        item.attrs
+            .iter()
+            .filter(|attr| {
+                attr.name().map_or(false, |name| {
+                    matches!(name, sym::expect | sym::allow | sym::warn | sym::deny | sym::forbid)
+                })
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Apply diagnostic attributes to expanded foreign items
+    fn apply_diagnostic_attrs_to_foreign_items(
+        &self,
+        items: &mut [Box<ast::ForeignItem>],
+        attrs: Vec<ast::Attribute>,
+    ) {
+        if attrs.is_empty() {
+            return;
+        }
+
+        // Add diagnostic attributes to each expanded foreign item
+        for item in items.iter_mut() {
+            let mut new_attrs = attrs.clone();
+            new_attrs.extend(item.attrs.iter().cloned());
+            item.attrs = new_attrs.into();
+        }
+    }
+
+    /// Extract diagnostic attributes from an expression
+    fn extract_diagnostic_attrs_from_expr(&self, expr: &ast::Expr) -> Vec<ast::Attribute> {
+        expr.attrs
+            .iter()
+            .filter(|attr| {
+                attr.name().map_or(false, |name| {
+                    matches!(name, sym::expect | sym::allow | sym::warn | sym::deny | sym::forbid)
+                })
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Apply diagnostic attributes to an expanded expression
+    fn apply_diagnostic_attrs_to_expr(&self, expr: &mut ast::Expr, attrs: Vec<ast::Attribute>) {
+        if attrs.is_empty() {
+            return;
+        }
+
+        // Add diagnostic attributes to the expanded expression
+        let mut new_attrs = attrs;
+        new_attrs.extend(expr.attrs.iter().cloned());
+        expr.attrs = new_attrs.into();
+    }
+
     pub(crate) fn add(&mut self, id: ast::NodeId, mut fragment: AstFragment) {
         // Debug logging for attribute tracking - only for fragments with diagnostic attributes
         if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
@@ -367,21 +460,6 @@ impl MutVisitor for PlaceholderExpander {
     }
 
     fn flat_map_item(&mut self, item: Box<ast::Item>) -> SmallVec<[Box<ast::Item>; 1]> {
-        // Debug logging for attribute tracking - only for items with diagnostic attributes
-        if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
-            let has_diagnostic_attrs = item.attrs.iter().any(|attr| {
-                attr.name().map_or(false, |name| {
-                    matches!(name, sym::expect | sym::allow | sym::warn | sym::deny | sym::forbid)
-                })
-            });
-
-            if has_diagnostic_attrs {
-                eprintln!("=== EXPAND DEBUG: flat_map_item for {:?} ===", item.id);
-                eprintln!("Original item attrs: {:?}", item.attrs);
-                eprintln!("Item kind: {:?}", item.kind);
-            }
-        }
-
         // Check if this item has diagnostic attributes that need to be transferred
         let diagnostic_attrs = self.extract_diagnostic_attrs(&item);
         let has_diagnostic_attrs = !diagnostic_attrs.is_empty();
@@ -413,16 +491,20 @@ impl MutVisitor for PlaceholderExpander {
                 expanded_items
             }
             _ => {
-                // Even if this isn't a macro call, if it has diagnostic attributes,
-                // we should preserve them (this handles cases where expansion happened elsewhere)
+                // For items with diagnostic attributes, we need to check if they contain macro calls
+                // that should inherit these attributes
                 if has_diagnostic_attrs {
                     if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
-                        eprintln!("Preserving diagnostic attrs on non-macro item: {:?}", item.id);
+                        eprintln!(
+                            "Item with diagnostic attrs, checking for macro calls: {:?}",
+                            item.id
+                        );
                     }
-                    // For non-macro items with diagnostic attributes, we need to ensure they're preserved
-                    // This might be a case where the expansion happened at a different level
+
+                    // Store the diagnostic attributes for potential transfer to child macro calls
+                    // This is a simplified approach - in a real implementation, we'd need to
+                    // track which macro calls should inherit which attributes
                     let new_item = item.clone();
-                    // The diagnostic attributes should already be there, but let's make sure
                     walk_flat_map_item(self, new_item)
                 } else {
                     walk_flat_map_item(self, item)
@@ -436,16 +518,57 @@ impl MutVisitor for PlaceholderExpander {
         item: Box<ast::AssocItem>,
         ctxt: AssocCtxt,
     ) -> SmallVec<[Box<ast::AssocItem>; 1]> {
+        // Check if this associated item has diagnostic attributes that need to be transferred
+        let diagnostic_attrs = self.extract_diagnostic_attrs_from_assoc_item(&item);
+        let has_diagnostic_attrs = !diagnostic_attrs.is_empty();
+
+        if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() && has_diagnostic_attrs {
+            eprintln!("=== EXPAND DEBUG: flat_map_assoc_item for {:?} ===", item.id);
+            eprintln!("Original assoc item attrs: {:?}", item.attrs);
+            eprintln!("Assoc item kind: {:?}", item.kind);
+            eprintln!("Diagnostic attrs found: {}", diagnostic_attrs.len());
+        }
+
         match item.kind {
             ast::AssocItemKind::MacCall(_) => {
-                let it = self.remove(item.id);
-                match ctxt {
-                    AssocCtxt::Trait => it.make_trait_items(),
-                    AssocCtxt::Impl { of_trait: false } => it.make_impl_items(),
-                    AssocCtxt::Impl { of_trait: true } => it.make_trait_impl_items(),
+                let mut expanded_items = {
+                    let it = self.remove(item.id);
+                    match ctxt {
+                        AssocCtxt::Trait => it.make_trait_items(),
+                        AssocCtxt::Impl { of_trait: false } => it.make_impl_items(),
+                        AssocCtxt::Impl { of_trait: true } => it.make_trait_impl_items(),
+                    }
+                };
+
+                // Transfer diagnostic attributes from original item to expanded items
+                if has_diagnostic_attrs {
+                    let items_slice = expanded_items.as_mut_slice();
+                    self.apply_diagnostic_attrs_to_assoc_items(items_slice, diagnostic_attrs);
+                }
+
+                if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() && has_diagnostic_attrs {
+                    eprintln!("Expanded assoc items count: {}", expanded_items.len());
+                    for (i, expanded_item) in expanded_items.iter().enumerate() {
+                        eprintln!("Expanded assoc item {} attrs: {:?}", i, expanded_item.attrs);
+                    }
+                    eprintln!("===");
+                }
+                expanded_items
+            }
+            _ => {
+                if has_diagnostic_attrs {
+                    if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
+                        eprintln!(
+                            "Assoc item with diagnostic attrs, checking for macro calls: {:?}",
+                            item.id
+                        );
+                    }
+                    let new_item = item.clone();
+                    walk_flat_map_assoc_item(self, new_item, ctxt)
+                } else {
+                    walk_flat_map_assoc_item(self, item, ctxt)
                 }
             }
-            _ => walk_flat_map_assoc_item(self, item, ctxt),
         }
     }
 
@@ -453,29 +576,130 @@ impl MutVisitor for PlaceholderExpander {
         &mut self,
         item: Box<ast::ForeignItem>,
     ) -> SmallVec<[Box<ast::ForeignItem>; 1]> {
+        // Check if this foreign item has diagnostic attributes that need to be transferred
+        let diagnostic_attrs = self.extract_diagnostic_attrs_from_foreign_item(&item);
+        let has_diagnostic_attrs = !diagnostic_attrs.is_empty();
+
+        if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() && has_diagnostic_attrs {
+            eprintln!("=== EXPAND DEBUG: flat_map_foreign_item for {:?} ===", item.id);
+            eprintln!("Original foreign item attrs: {:?}", item.attrs);
+            eprintln!("Foreign item kind: {:?}", item.kind);
+            eprintln!("Diagnostic attrs found: {}", diagnostic_attrs.len());
+        }
+
         match item.kind {
-            ast::ForeignItemKind::MacCall(_) => self.remove(item.id).make_foreign_items(),
-            _ => walk_flat_map_foreign_item(self, item),
+            ast::ForeignItemKind::MacCall(_) => {
+                let mut expanded_items = self.remove(item.id).make_foreign_items();
+
+                // Transfer diagnostic attributes from original item to expanded items
+                if has_diagnostic_attrs {
+                    let items_slice = expanded_items.as_mut_slice();
+                    self.apply_diagnostic_attrs_to_foreign_items(items_slice, diagnostic_attrs);
+                }
+
+                if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() && has_diagnostic_attrs {
+                    eprintln!("Expanded foreign items count: {}", expanded_items.len());
+                    for (i, expanded_item) in expanded_items.iter().enumerate() {
+                        eprintln!("Expanded foreign item {} attrs: {:?}", i, expanded_item.attrs);
+                    }
+                    eprintln!("===");
+                }
+                expanded_items
+            }
+            _ => {
+                if has_diagnostic_attrs {
+                    if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
+                        eprintln!(
+                            "Foreign item with diagnostic attrs, checking for macro calls: {:?}",
+                            item.id
+                        );
+                    }
+                    let new_item = item.clone();
+                    walk_flat_map_foreign_item(self, new_item)
+                } else {
+                    walk_flat_map_foreign_item(self, item)
+                }
+            }
         }
     }
 
     fn visit_expr(&mut self, expr: &mut ast::Expr) {
         match expr.kind {
-            ast::ExprKind::MacCall(_) => *expr = *self.remove(expr.id).make_expr(),
+            ast::ExprKind::MacCall(_) => {
+                let mut expanded_expr = self.remove(expr.id).make_expr();
+
+                // Check if the original expression has diagnostic attributes
+                let diagnostic_attrs = self.extract_diagnostic_attrs_from_expr(&expr);
+                if !diagnostic_attrs.is_empty() {
+                    if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
+                        eprintln!("=== EXPAND DEBUG: visit_expr for {:?} ===", expr.id);
+                        eprintln!("Original expr attrs: {:?}", expr.attrs);
+                        eprintln!("Diagnostic attrs found: {}", diagnostic_attrs.len());
+                    }
+
+                    // Add diagnostic attributes to the expanded expression
+                    self.apply_diagnostic_attrs_to_expr(&mut *expanded_expr, diagnostic_attrs);
+                }
+
+                *expr = *expanded_expr;
+            }
             _ => walk_expr(self, expr),
         }
     }
 
     fn visit_method_receiver_expr(&mut self, expr: &mut ast::Expr) {
         match expr.kind {
-            ast::ExprKind::MacCall(_) => *expr = *self.remove(expr.id).make_method_receiver_expr(),
+            ast::ExprKind::MacCall(_) => {
+                let mut expanded_expr = self.remove(expr.id).make_method_receiver_expr();
+
+                // Check if the original expression has diagnostic attributes
+                let diagnostic_attrs = self.extract_diagnostic_attrs_from_expr(expr);
+                if !diagnostic_attrs.is_empty() {
+                    if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
+                        eprintln!(
+                            "=== EXPAND DEBUG: visit_method_receiver_expr for {:?} ===",
+                            expr.id
+                        );
+                        eprintln!("Original expr attrs: {:?}", expr.attrs);
+                        eprintln!("Diagnostic attrs found: {}", diagnostic_attrs.len());
+                    }
+
+                    // Add diagnostic attributes to the expanded expression
+                    let mut new_attrs = diagnostic_attrs;
+                    new_attrs.extend(expanded_expr.attrs.iter().cloned());
+                    expanded_expr.attrs = new_attrs.into();
+                }
+
+                *expr = *expanded_expr;
+            }
             _ => walk_expr(self, expr),
         }
     }
 
     fn filter_map_expr(&mut self, expr: Box<ast::Expr>) -> Option<Box<ast::Expr>> {
         match expr.kind {
-            ast::ExprKind::MacCall(_) => self.remove(expr.id).make_opt_expr(),
+            ast::ExprKind::MacCall(_) => {
+                let expanded_expr_opt = self.remove(expr.id).make_opt_expr();
+
+                if let Some(mut expanded_expr) = expanded_expr_opt {
+                    // Check if the original expression has diagnostic attributes
+                    let diagnostic_attrs = self.extract_diagnostic_attrs_from_expr(&expr);
+                    if !diagnostic_attrs.is_empty() {
+                        if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
+                            eprintln!("=== EXPAND DEBUG: filter_map_expr for {:?} ===", expr.id);
+                            eprintln!("Original expr attrs: {:?}", expr.attrs);
+                            eprintln!("Diagnostic attrs found: {}", diagnostic_attrs.len());
+                        }
+
+                        // Add diagnostic attributes to the expanded expression
+                        self.apply_diagnostic_attrs_to_expr(&mut *expanded_expr, diagnostic_attrs);
+                    }
+
+                    Some(expanded_expr)
+                } else {
+                    None
+                }
+            }
             _ => walk_filter_map_expr(self, expr),
         }
     }
