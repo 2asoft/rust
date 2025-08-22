@@ -506,13 +506,6 @@ impl MutVisitor for PlaceholderExpander {
         let diagnostic_attrs = self.extract_diagnostic_attrs_from_foreign_item(&item);
         let has_diagnostic_attrs = !diagnostic_attrs.is_empty();
 
-        if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() && has_diagnostic_attrs {
-            eprintln!("=== EXPAND DEBUG: flat_map_foreign_item for {:?} ===", item.id);
-            eprintln!("Original foreign item attrs: {:?}", item.attrs);
-            eprintln!("Foreign item kind: {:?}", item.kind);
-            eprintln!("Diagnostic attrs found: {}", diagnostic_attrs.len());
-        }
-
         match item.kind {
             ast::ForeignItemKind::MacCall(_) => {
                 let mut expanded_items = self.remove(item.id).make_foreign_items();
@@ -544,12 +537,6 @@ impl MutVisitor for PlaceholderExpander {
                 // Check if the original expression has diagnostic attributes
                 let diagnostic_attrs = self.extract_diagnostic_attrs_from_expr(&expr);
                 if !diagnostic_attrs.is_empty() {
-                    if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
-                        eprintln!("=== EXPAND DEBUG: visit_expr for {:?} ===", expr.id);
-                        eprintln!("Original expr attrs: {:?}", expr.attrs);
-                        eprintln!("Diagnostic attrs found: {}", diagnostic_attrs.len());
-                    }
-
                     // Add diagnostic attributes to the expanded expression
                     self.apply_diagnostic_attrs_to_expr(&mut *expanded_expr, diagnostic_attrs);
                 }
@@ -568,19 +555,8 @@ impl MutVisitor for PlaceholderExpander {
                 // Check if the original expression has diagnostic attributes
                 let diagnostic_attrs = self.extract_diagnostic_attrs_from_expr(expr);
                 if !diagnostic_attrs.is_empty() {
-                    if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
-                        eprintln!(
-                            "=== EXPAND DEBUG: visit_method_receiver_expr for {:?} ===",
-                            expr.id
-                        );
-                        eprintln!("Original expr attrs: {:?}", expr.attrs);
-                        eprintln!("Diagnostic attrs found: {}", diagnostic_attrs.len());
-                    }
-
                     // Add diagnostic attributes to the expanded expression
-                    let mut new_attrs = diagnostic_attrs;
-                    new_attrs.extend(expanded_expr.attrs.iter().cloned());
-                    expanded_expr.attrs = new_attrs.into();
+                    self.apply_diagnostic_attrs_to_expr(&mut *expanded_expr, diagnostic_attrs);
                 }
 
                 *expr = *expanded_expr;

@@ -646,13 +646,6 @@ impl<'tcx> LintContext for LateContext<'tcx> {
     }
 
     fn get_lint_level(&self, lint: &'static Lint) -> LevelAndSource {
-        eprintln!("LATE CONTEXT GET_LINT_LEVEL CALLED: {:?}", self.last_node_with_lint_attrs);
-        // Always check for proc macro expansion first
-        let is_proc_macro = self.is_in_proc_macro_expansion(self.last_node_with_lint_attrs);
-        if is_proc_macro {
-            eprintln!("PROC MACRO EXPANSION DETECTED: {:?}", self.last_node_with_lint_attrs);
-        }
-
         self.tcx.lint_level_at_node(lint, self.last_node_with_lint_attrs)
     }
 }
@@ -679,31 +672,6 @@ impl LintContext for EarlyContext<'_> {
 }
 
 impl<'tcx> LateContext<'tcx> {
-    /// Quick POC: Check if we're in a proc macro expansion context
-    fn is_in_proc_macro_expansion(&self, hir_id: hir::HirId) -> bool {
-        eprintln!("PROC MACRO CHECK: Called with HIR ID {:?}", hir_id);
-        let span = self.tcx.hir_span(hir_id);
-        eprintln!("PROC MACRO CHECK: Span: {:?}, From expansion: {}", span, span.from_expansion());
-        if span.from_expansion() {
-            let expn_data = span.ctxt().outer_expn_data();
-            eprintln!("PROC MACRO CHECK: Expansion kind: {:?}", expn_data.kind);
-            let result = matches!(
-                expn_data.kind,
-                rustc_span::ExpnKind::Macro(rustc_span::MacroKind::Attr, _)
-            );
-            eprintln!("PROC MACRO CHECK: Is proc macro expansion: {}", result);
-            result
-        } else {
-            eprintln!("PROC MACRO CHECK: Not from expansion, returning false");
-            false
-        }
-    }
-
-    /// Test method to verify the proc macro check is accessible
-    pub fn test_proc_macro_check(&self) {
-        eprintln!("TEST: Proc macro check method is accessible");
-    }
-
     /// The typing mode of the currently visited node. Use this when
     /// building a new `InferCtxt`.
     pub fn typing_mode(&self) -> TypingMode<'tcx> {
