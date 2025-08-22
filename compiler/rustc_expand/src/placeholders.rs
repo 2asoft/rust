@@ -225,6 +225,23 @@ pub(crate) struct PlaceholderExpander {
 
 impl PlaceholderExpander {
     pub(crate) fn add(&mut self, id: ast::NodeId, mut fragment: AstFragment) {
+        // Debug logging for attribute tracking
+        if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
+            eprintln!("=== EXPAND DEBUG: Adding fragment for NodeId {:?} ===", id);
+            eprintln!("Fragment type: {:?}", std::mem::discriminant(&fragment));
+            // Log attributes on expanded items by creating a simple visitor
+            struct AttrLogger;
+            impl<'a> ast::visit::Visitor<'a> for AttrLogger {
+                type Result = ();
+                fn visit_item(&mut self, item: &'a ast::Item) {
+                    eprintln!("Expanded item attrs: {:?}", item.attrs);
+                }
+            }
+            let mut logger = AttrLogger;
+            fragment.visit_with(&mut logger);
+            eprintln!("===");
+        }
+
         fragment.mut_visit_with(self);
         self.expanded_fragments.insert(id, fragment);
     }
@@ -306,8 +323,25 @@ impl MutVisitor for PlaceholderExpander {
     }
 
     fn flat_map_item(&mut self, item: Box<ast::Item>) -> SmallVec<[Box<ast::Item>; 1]> {
+        // Debug logging for attribute tracking
+        if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
+            eprintln!("=== EXPAND DEBUG: flat_map_item for {:?} ===", item.id);
+            eprintln!("Original item attrs: {:?}", item.attrs);
+            eprintln!("Item kind: {:?}", item.kind);
+        }
+
         match item.kind {
-            ast::ItemKind::MacCall(_) => self.remove(item.id).make_items(),
+            ast::ItemKind::MacCall(_) => {
+                let expanded_items = self.remove(item.id).make_items();
+                if std::env::var("RUSTC_DEBUG_EXPAND_ATTRS").is_ok() {
+                    eprintln!("Expanded items count: {}", expanded_items.len());
+                    for (i, expanded_item) in expanded_items.iter().enumerate() {
+                        eprintln!("Expanded item {} attrs: {:?}", i, expanded_item.attrs);
+                    }
+                    eprintln!("===");
+                }
+                expanded_items
+            }
             _ => walk_flat_map_item(self, item),
         }
     }
